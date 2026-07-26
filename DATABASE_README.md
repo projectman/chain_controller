@@ -1,6 +1,6 @@
 # Options Chain Controller Database Documentation (`DATABASE_README.md`)
 
-The Options Chain Controller application uses an **SQLite database (`options_chains.db`)** to persist multi-leg options strategies, position headers, and contract legs.
+The Options Chain Controller application uses an **SQLite database (`options_chains.db`)** to persist multi-leg options strategies, position headers, transaction records, and active/closed lifecycle states.
 
 ---
 
@@ -16,18 +16,21 @@ The Options Chain Controller application uses an **SQLite database (`options_cha
 ## Table Schemas
 
 ### 1. `chains` Table
-Stores header information and underlying asset metadata for each options strategy/chain.
+Stores header information, active status, opening/closing dates, and underlying asset metadata for each options strategy/chain.
 
 | Column | Data Type | Description |
 | :--- | :--- | :--- |
 | `id` | `INTEGER` | Primary key (auto-incrementing unique chain ID) |
-| `symbol` | `TEXT` | Ticker symbol of the underlying asset (e.g. `AAPL`, `SPY`, `TSLA`) |
-| `name` | `TEXT` | Name of the strategy (e.g. `AAPL Bull Call Spread`) |
-| `underlying_entry_price` | `REAL` | Reference price of the underlying stock when the chain was opened |
+| `symbol` | `TEXT` | Ticker symbol of the underlying asset (e.g. `IBM`, `AAPL`, `SPY`) |
+| `name` | `TEXT` | Name of the strategy (e.g. `IBM 2026-07-24 Chain`) |
+| `underlying_entry_price` | `REAL` | Reference price of the underlying stock when opened |
 | `underlying_current_price` | `REAL` | Current market price of the underlying stock |
 | `shares` | `INTEGER` | Quantity of underlying stock shares held (default `0`) |
 | `share_entry_price` | `REAL` | Entry cost basis per stock share (default `0.0`) |
 | `share_current_price` | `REAL` | Current price per stock share (default `0.0`) |
+| `active` | `INTEGER` | `1` (`True`) for active open chains, `0` (`False`) for closed chains |
+| `opened_date` | `TEXT` | ISO date string (e.g. `2026-07-14`) when first opening trade occurred |
+| `closed_date` | `TEXT` | ISO date string (e.g. `2026-07-16`) when chain was fully closed (`NULL` for active) |
 | `created_at` | `TIMESTAMP` | Record creation timestamp (defaults to `CURRENT_TIMESTAMP`) |
 
 #### SQL DDL Statement:
@@ -41,6 +44,9 @@ CREATE TABLE chains (
     shares INTEGER DEFAULT 0,
     share_entry_price REAL DEFAULT 0.0,
     share_current_price REAL DEFAULT 0.0,
+    active INTEGER DEFAULT 1,
+    opened_date TEXT,
+    closed_date TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
@@ -48,20 +54,25 @@ CREATE TABLE chains (
 ---
 
 ### 2. `legs` Table
-Stores each individual option position (call or put, bought or sold) belonging to an options chain.
+Stores each individual option transaction/position belonging to an options chain.
 
 | Column | Data Type | Description |
 | :--- | :--- | :--- |
 | `id` | `INTEGER` | Primary key for the leg record |
 | `chain_id` | `INTEGER` | **Foreign Key** pointing to `chains(id)` (`ON DELETE CASCADE`) |
-| `strike` | `REAL` | Option strike price (e.g. `150.0`) |
+| `strike` | `REAL` | Option strike price (e.g. `200.0`) |
 | `option_type` | `TEXT` | `CALL` or `PUT` |
 | `side` | `TEXT` | `BUY` (Long position) or `SELL` (Short position) |
-| `quantity` | `INTEGER` | Number of contracts (e.g. `1`, `5`, `10`) |
-| `entry_price` | `REAL` | Premium paid or received per share at entry (e.g. `$5.00`) |
+| `quantity` | `INTEGER` | Number of contracts (e.g. `1`, `5`) |
+| `entry_price` | `REAL` | Premium paid or received per share at entry (e.g. `$3.80`) |
 | `current_price` | `REAL` | Current market price/premium per share |
-| `expiration_date` | `TEXT` | Expiration date string (e.g. `2026-08-21`) |
+| `expiration_date` | `TEXT` | Expiration date string (e.g. `2026-07-24`) |
 | `multiplier` | `REAL` | Contract multiplier (default `100.0` per contract) |
+| `action` | `TEXT` | Transaction action: `SELL_TO_OPEN`, `BUY_TO_OPEN`, `BUY_TO_CLOSE`, `SELL_TO_CLOSE` |
+| `trade_date` | `TEXT` | ISO transaction date string (e.g. `2026-07-14`) |
+| `commission` | `REAL` | Broker commission paid (e.g. `0.65`) |
+| `fees` | `REAL` | Regulatory/exchange fees paid (e.g. `0.01`) |
+| `occ_symbol` | `TEXT` | Standard 21-character OCC option symbol (e.g. `IBM260724P200`) |
 
 #### SQL DDL Statement:
 ```sql
@@ -76,6 +87,11 @@ CREATE TABLE legs (
     current_price REAL,
     expiration_date TEXT,
     multiplier REAL DEFAULT 100.0,
+    action TEXT,
+    trade_date TEXT,
+    commission REAL DEFAULT 0.0,
+    fees REAL DEFAULT 0.0,
+    occ_symbol TEXT,
     FOREIGN KEY (chain_id) REFERENCES chains (id) ON DELETE CASCADE
 );
 ```
@@ -96,6 +112,9 @@ erDiagram
         int shares
         float share_entry_price
         float share_current_price
+        int active
+        string opened_date
+        string closed_date
         timestamp created_at
     }
     legs {
@@ -109,25 +128,10 @@ erDiagram
         float current_price
         string expiration_date
         float multiplier
+        string action
+        string trade_date
+        float commission
+        float fees
+        string occ_symbol
     }
-```
-
----
-
-## Sample SQL Queries
-
-### Query All Saved Chains with Leg Counts
-```sql
-SELECT c.id, c.symbol, c.name, COUNT(l.id) AS leg_count, c.created_at
-FROM chains c
-LEFT JOIN legs l ON c.id = l.chain_id
-GROUP BY c.id
-ORDER BY c.created_at DESC;
-```
-
-### Query All Legs for a Specific Chain
-```sql
-SELECT side, quantity, option_type, strike, entry_price, current_price, multiplier
-FROM legs
-WHERE chain_id = 1;
 ```

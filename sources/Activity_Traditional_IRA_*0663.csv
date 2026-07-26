@@ -1,0 +1,19 @@
+﻿"Activity 
+Traditional IRA *0663 
+as of 07/26/2026 at 03:34:19 PM"
+
+Date,Activity Description,Symbol,Quantity,Price,Amount,Cash Balance,Description,Commission,Fees,Account
+Jul-21-2026,YOU BOUGHT,IBM,100,210.49,"-21,049.00","+18,050.38",INTERNATIONAL BUS MACH CORP COM USD0.20,--,--,Traditional IRA *0663
+Jul-16-2026,YOU BOUGHT CLOSING TRANSACTION,IBM260724P200,1,1.80,-180.66,"+36,844.91",PUT (IBM) INTERNATIONAL BUS JUL 24 26 $200 (100 SHS),0.65,0.01,Traditional IRA *0663
+Jul-14-2026,YOU SOLD OPENING TRANSACTION,IBM260724P200,-1,3.80,379.34,"+37,025.57",PUT (IBM) INTERNATIONAL BUS JUL 24 26 $200 (100 SHS),0.65,0.01,Traditional IRA *0663
+,Totals,,,,"  -20,850.32",,,  1.30,  0.02,
+
+Disclosure
+"The data and information in this spreadsheet is provided to you solely for your use and is not for distribution. 
+The spreadsheet is provided for informational purposes only, and is not intended to provide advice, nor should it be construed as an offer to sell, a solicitation of an offer to buy or a recommendation for any security 
+or digital asset by Fidelity or any third party. Data and information shown is based on information known to Fidelity as of the date it was exported and is subject to change. 
+It should not be used in place of your account statements or trade confirmations and is not intended for tax reporting purposes. 
+For more information on the data included in this spreadsheet, including any limitations thereof, go to Fidelity.com.
+ 
+Brokerage services are provided by Fidelity Brokerage Services LLC (FBS), 900 Salem Street, Smithfield, RI 02917. Custody and other services provided by National Financial Services LLC (NFS). 
+Both are Fidelity Investment companies and members SIPC, NYSE. Neither FBS nor NFS offer crypto as a direct investment nor provide trading or custody services for such assets."

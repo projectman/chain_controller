@@ -5,6 +5,7 @@ from typing import Optional
 from .models import OptionsChain, OptionLeg, OptionType, OptionSide
 from .calculator import ChainCalculator
 from .storage import ChainStorage
+from .activity_parser import ActivityParser
 
 
 def format_currency(val: float) -> str:
@@ -15,15 +16,24 @@ def format_currency(val: float) -> str:
 
 def print_chain_summary(chain: OptionsChain):
     summary = ChainCalculator.analyze_chain(chain)
+    status_str = "ACTIVE" if chain.active else "CLOSED"
+    opened_str = chain.opened_date or "N/A"
+    closed_str = chain.closed_date or ("Open" if chain.active else "N/A")
+
     print("\n" + "=" * 65)
     print(f"  OPTIONS CHAIN ANALYSIS: {summary['name']} ({summary['symbol']})")
     print("=" * 65)
     if chain.id:
         print(f"  Database ID      : {chain.id}")
+    print(f"  Status           : [{status_str}]")
+    print(f"  Opened Date      : {opened_str}")
+    print(f"  Closed Date      : {closed_str}")
     print(f"  Total Legs       : {summary['leg_count']}")
     if chain.shares > 0:
         print(f"  Stock Shares     : {chain.shares} @ {format_currency(chain.share_entry_price)}")
     print(f"  Net Outlay       : {format_currency(summary['net_initial_cost'])} ({summary['cost_type']})")
+    if chain.total_commissions_and_fees > 0:
+        print(f"  Commissions/Fees : {format_currency(chain.total_commissions_and_fees)}")
     print(f"  Current MTM PnL  : {format_currency(summary['current_unrealized_pnl'])}")
     print("-" * 65)
     print(f"  Breakeven Points : {', '.join([format_currency(b) for b in summary['breakeven_points']]) if summary['breakeven_points'] else 'None'}")
@@ -34,13 +44,14 @@ def print_chain_summary(chain: OptionsChain):
 
     if chain.legs:
         print("\n  POSITIONS & LEGS:")
-        header = f"  {'Side':<6} {'Qty':<4} {'Type':<6} {'Strike':<9} {'Entry Price':<12} {'Current Price':<12} {'Initial Outlay':<14}"
+        header = f"  {'Side':<6} {'Qty':<4} {'Type':<6} {'Strike':<9} {'Entry':<10} {'Action':<15} {'Trade Date':<12} {'Initial Outlay':<14}"
         print(header)
         print("  " + "-" * (len(header) - 2))
         for leg in chain.legs:
-            cur = format_currency(leg.current_price) if leg.current_price is not None else "-"
+            action_val = leg.action or "-"
+            t_date = leg.trade_date or "-"
             outlay = format_currency(leg.initial_cost)
-            print(f"  {leg.side.value:<6} {leg.quantity:<4} {leg.option_type.value:<6} ${leg.strike:<8.2f} {format_currency(leg.entry_price):<12} {cur:<12} {outlay:<14}")
+            print(f"  {leg.side.value:<6} {leg.quantity:<4} {leg.option_type.value:<6} ${leg.strike:<8.2f} {format_currency(leg.entry_price):<10} {action_val:<15} {t_date:<12} {outlay:<14}")
         print("-" * 65 + "\n")
 
 
@@ -70,7 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
     # Command: list
-    subparsers.add_parser("list", help="List all saved options chains in database")
+    list_p = subparsers.add_parser("list", help="List all saved options chains in database")
+    list_p.add_argument("--all", action="store_true", help="Include both active and closed chains (default: all)")
 
     # Command: create
     create_p = subparsers.add_parser("create", help="Create a new options chain")
@@ -90,6 +102,8 @@ def build_parser() -> argparse.ArgumentParser:
     leg_p.add_argument("--qty", type=int, default=1, help="Quantity of contracts")
     leg_p.add_argument("--current-price", type=float, help="Current option market price")
     leg_p.add_argument("--exp", help="Expiration date (YYYY-MM-DD)")
+    leg_p.add_argument("--action", help="Transaction action (e.g. SELL_TO_OPEN, BUY_TO_CLOSE)")
+    leg_p.add_argument("--date", help="Trade date (YYYY-MM-DD)")
 
     # Command: analyze
     analyze_p = subparsers.add_parser("analyze", help="Analyze integrated profitability of a chain")
@@ -101,6 +115,10 @@ def build_parser() -> argparse.ArgumentParser:
     payoff_p.add_argument("--chain-id", type=int, help="ID of saved chain")
     payoff_p.add_argument("--name", help="Name of saved chain")
     payoff_p.add_argument("--points", type=int, default=15, help="Number of price evaluation points")
+
+    # Command: import-sources
+    sources_p = subparsers.add_parser("import-sources", help="Parse Activity*.csv files in sources/ folder to create/update chains")
+    sources_p.add_argument("--dir", default="sources", help="Directory containing Activity*.csv files")
 
     # Command: export
     export_p = subparsers.add_parser("export", help="Export chain to CSV file")
@@ -136,14 +154,18 @@ def main_cli(args=None):
         if not chains:
             print("No saved options chains found in database.")
             return
-        print("\n" + "=" * 65)
+        print("\n" + "=" * 85)
         print(f"  SAVED OPTIONS CHAINS ({parsed.db})")
-        print("=" * 65)
-        print(f"  {'ID':<5} {'Symbol':<8} {'Name':<30} {'Legs':<6} {'Created At'}")
-        print("  " + "-" * 61)
+        print("=" * 85)
+        print(f"  {'ID':<5} {'Status':<10} {'Symbol':<8} {'Name':<28} {'Opened':<12} {'Closed':<12} {'Legs'}")
+        print("  " + "-" * 81)
         for c in chains:
-            print(f"  {c['id']:<5} {c['symbol']:<8} {(c['name'] or ''):<30} {c['leg_count']:<6} {c['created_at']}")
-        print("=" * 65 + "\n")
+            is_active = bool(c['active']) if c['active'] is not None else True
+            st_badge = "ACTIVE" if is_active else "CLOSED"
+            opened_d = c['opened_date'] or "-"
+            closed_d = c['closed_date'] or ("Open" if is_active else "-")
+            print(f"  {c['id']:<5} [{st_badge:<6}] {c['symbol']:<8} {(c['name'] or ''):<28} {opened_d:<12} {closed_d:<12} {c['leg_count']}")
+        print("=" * 85 + "\n")
 
     elif parsed.command == "create":
         chain = OptionsChain(
@@ -154,6 +176,17 @@ def main_cli(args=None):
         )
         chain_id = storage.save_chain(chain)
         print(f"Created new options chain '{chain.name}' (ID: {chain_id}) for symbol {chain.symbol}.")
+
+    elif parsed.command == "import-sources":
+        imported = ActivityParser.import_sources_folder(sources_dir=parsed.dir, storage=storage)
+        if not imported:
+            print(f"No Activity*.csv transaction files found or parsed in '{parsed.dir}'.")
+            return
+        print(f"\nSuccessfully imported/updated {len(imported)} options chain(s) from '{parsed.dir}':")
+        for chain in imported:
+            st = "ACTIVE" if chain.active else "CLOSED"
+            print(f" - [{st}] {chain.name} ({len(chain.legs)} legs) | Opened: {chain.opened_date or 'N/A'} | Closed: {chain.closed_date or 'Open'}")
+        print()
 
     elif parsed.command in ("add-leg", "analyze", "payoff", "export"):
         chain = None
@@ -174,7 +207,9 @@ def main_cli(args=None):
                 quantity=parsed.qty,
                 entry_price=parsed.price,
                 current_price=parsed.current_price if parsed.current_price is not None else parsed.price,
-                expiration_date=parsed.exp
+                expiration_date=parsed.exp,
+                action=parsed.action,
+                trade_date=parsed.date
             )
             chain.add_leg(leg)
             storage.save_chain(chain)

@@ -18,7 +18,7 @@ class ChainStorage:
         return conn
 
     def _init_db(self) -> None:
-        """Initializes database schema if tables do not exist."""
+        """Initializes database schema if tables do not exist and runs column migrations."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -31,6 +31,9 @@ class ChainStorage:
                     shares INTEGER DEFAULT 0,
                     share_entry_price REAL DEFAULT 0.0,
                     share_current_price REAL DEFAULT 0.0,
+                    active INTEGER DEFAULT 1,
+                    opened_date TEXT,
+                    closed_date TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
@@ -47,25 +50,57 @@ class ChainStorage:
                     current_price REAL,
                     expiration_date TEXT,
                     multiplier REAL DEFAULT 100.0,
+                    action TEXT,
+                    trade_date TEXT,
+                    commission REAL DEFAULT 0.0,
+                    fees REAL DEFAULT 0.0,
+                    occ_symbol TEXT,
                     FOREIGN KEY (chain_id) REFERENCES chains (id) ON DELETE CASCADE
                 );
             """)
+
+            # Auto-migrate existing database tables if missing columns
+            cursor.execute("PRAGMA table_info(chains)")
+            chain_cols = {row['name'] for row in cursor.fetchall()}
+            if 'active' not in chain_cols:
+                cursor.execute("ALTER TABLE chains ADD COLUMN active INTEGER DEFAULT 1")
+            if 'opened_date' not in chain_cols:
+                cursor.execute("ALTER TABLE chains ADD COLUMN opened_date TEXT")
+            if 'closed_date' not in chain_cols:
+                cursor.execute("ALTER TABLE chains ADD COLUMN closed_date TEXT")
+
+            cursor.execute("PRAGMA table_info(legs)")
+            leg_cols = {row['name'] for row in cursor.fetchall()}
+            if 'action' not in leg_cols:
+                cursor.execute("ALTER TABLE legs ADD COLUMN action TEXT")
+            if 'trade_date' not in leg_cols:
+                cursor.execute("ALTER TABLE legs ADD COLUMN trade_date TEXT")
+            if 'commission' not in leg_cols:
+                cursor.execute("ALTER TABLE legs ADD COLUMN commission REAL DEFAULT 0.0")
+            if 'fees' not in leg_cols:
+                cursor.execute("ALTER TABLE legs ADD COLUMN fees REAL DEFAULT 0.0")
+            if 'occ_symbol' not in leg_cols:
+                cursor.execute("ALTER TABLE legs ADD COLUMN occ_symbol TEXT")
+
             conn.commit()
 
     def save_chain(self, chain: OptionsChain) -> int:
         """Saves or updates an options chain in SQLite."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            active_val = 1 if chain.active else 0
             if chain.id is not None:
                 # Update existing chain header
                 cursor.execute("""
                     UPDATE chains 
                     SET symbol = ?, name = ?, underlying_entry_price = ?, underlying_current_price = ?,
-                        shares = ?, share_entry_price = ?, share_current_price = ?
+                        shares = ?, share_entry_price = ?, share_current_price = ?,
+                        active = ?, opened_date = ?, closed_date = ?
                     WHERE id = ?
                 """, (
                     chain.symbol, chain.name, chain.underlying_entry_price, chain.underlying_current_price,
-                    chain.shares, chain.share_entry_price, chain.share_current_price, chain.id
+                    chain.shares, chain.share_entry_price, chain.share_current_price,
+                    active_val, chain.opened_date, chain.closed_date, chain.id
                 ))
                 chain_id = chain.id
                 # Clear existing legs to re-insert updated legs
@@ -73,11 +108,12 @@ class ChainStorage:
             else:
                 # Insert new chain header
                 cursor.execute("""
-                    INSERT INTO chains (symbol, name, underlying_entry_price, underlying_current_price, shares, share_entry_price, share_current_price)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO chains (symbol, name, underlying_entry_price, underlying_current_price, shares, share_entry_price, share_current_price, active, opened_date, closed_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     chain.symbol, chain.name, chain.underlying_entry_price, chain.underlying_current_price,
-                    chain.shares, chain.share_entry_price, chain.share_current_price
+                    chain.shares, chain.share_entry_price, chain.share_current_price,
+                    active_val, chain.opened_date, chain.closed_date
                 ))
                 chain_id = cursor.lastrowid
                 chain.id = chain_id
@@ -85,11 +121,12 @@ class ChainStorage:
             # Insert legs
             for leg in chain.legs:
                 cursor.execute("""
-                    INSERT INTO legs (chain_id, strike, option_type, side, quantity, entry_price, current_price, expiration_date, multiplier)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO legs (chain_id, strike, option_type, side, quantity, entry_price, current_price, expiration_date, multiplier, action, trade_date, commission, fees, occ_symbol)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     chain_id, leg.strike, leg.option_type.value, leg.side.value,
-                    leg.quantity, leg.entry_price, leg.current_price, leg.expiration_date, leg.multiplier
+                    leg.quantity, leg.entry_price, leg.current_price, leg.expiration_date, leg.multiplier,
+                    leg.action, leg.trade_date, leg.commission, leg.fees, leg.occ_symbol
                 ))
                 leg.id = cursor.lastrowid
 
@@ -105,6 +142,8 @@ class ChainStorage:
             if not row:
                 return None
 
+            active_bool = bool(row['active']) if row['active'] is not None else True
+
             chain = OptionsChain(
                 id=row['id'],
                 symbol=row['symbol'],
@@ -113,7 +152,10 @@ class ChainStorage:
                 underlying_current_price=row['underlying_current_price'],
                 shares=row['shares'],
                 share_entry_price=row['share_entry_price'],
-                share_current_price=row['share_current_price']
+                share_current_price=row['share_current_price'],
+                active=active_bool,
+                opened_date=row['opened_date'],
+                closed_date=row['closed_date']
             )
 
             cursor.execute("SELECT * FROM legs WHERE chain_id = ?", (chain_id,))
@@ -127,7 +169,12 @@ class ChainStorage:
                     entry_price=leg_row['entry_price'],
                     current_price=leg_row['current_price'],
                     expiration_date=leg_row['expiration_date'],
-                    multiplier=leg_row['multiplier']
+                    multiplier=leg_row['multiplier'],
+                    action=leg_row['action'],
+                    trade_date=leg_row['trade_date'],
+                    commission=leg_row['commission'] or 0.0,
+                    fees=leg_row['fees'] or 0.0,
+                    occ_symbol=leg_row['occ_symbol']
                 )
                 chain.add_leg(leg)
 
@@ -148,7 +195,7 @@ class ChainStorage:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT c.id, c.symbol, c.name, c.created_at, COUNT(l.id) as leg_count
+                SELECT c.id, c.symbol, c.name, c.active, c.opened_date, c.closed_date, c.created_at, COUNT(l.id) as leg_count
                 FROM chains c
                 LEFT JOIN legs l ON c.id = l.chain_id
                 GROUP BY c.id
@@ -171,9 +218,9 @@ class ChainStorage:
         with open(filepath, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             # Metadata header lines
-            writer.writerow(["# METADATA", "SYMBOL", chain.symbol, "NAME", chain.name or "", "SHARES", chain.shares, "SHARE_ENTRY", chain.share_entry_price])
+            writer.writerow(["# METADATA", "SYMBOL", chain.symbol, "NAME", chain.name or "", "ACTIVE", 1 if chain.active else 0, "OPENED_DATE", chain.opened_date or "", "CLOSED_DATE", chain.closed_date or "", "SHARES", chain.shares, "SHARE_ENTRY", chain.share_entry_price])
             # Leg columns
-            writer.writerow(["side", "quantity", "option_type", "strike", "entry_price", "current_price", "expiration_date", "multiplier"])
+            writer.writerow(["side", "quantity", "option_type", "strike", "entry_price", "current_price", "expiration_date", "multiplier", "action", "trade_date", "commission", "fees", "occ_symbol"])
             for leg in chain.legs:
                 writer.writerow([
                     leg.side.value,
@@ -183,7 +230,12 @@ class ChainStorage:
                     leg.entry_price,
                     leg.current_price if leg.current_price is not None else leg.entry_price,
                     leg.expiration_date or "",
-                    leg.multiplier
+                    leg.multiplier,
+                    leg.action or "",
+                    leg.trade_date or "",
+                    leg.commission,
+                    leg.fees,
+                    leg.occ_symbol or ""
                 ])
 
     @staticmethod
@@ -196,6 +248,9 @@ class ChainStorage:
         chain_name = name or os.path.basename(filepath).replace(".csv", "")
         shares = 0
         share_entry = 0.0
+        active = True
+        opened_date = None
+        closed_date = None
 
         legs = []
         with open(filepath, mode='r', encoding='utf-8') as f:
@@ -204,19 +259,29 @@ class ChainStorage:
                 if not row or len(row) == 0:
                     continue
                 if row[0] == "# METADATA":
-                    if len(row) >= 3 and row[1] == "SYMBOL" and row[2]:
-                        chain_symbol = symbol or row[2]
-                    if len(row) >= 5 and row[3] == "NAME" and row[4]:
-                        chain_name = name or row[4]
-                    if len(row) >= 7 and row[5] == "SHARES" and row[6]:
-                        shares = int(row[6])
-                    if len(row) >= 9 and row[7] == "SHARE_ENTRY" and row[8]:
-                        share_entry = float(row[8])
+                    for idx in range(1, len(row) - 1, 2):
+                        key = row[idx].upper()
+                        val = row[idx+1]
+                        if key == "SYMBOL" and val:
+                            chain_symbol = symbol or val
+                        elif key == "NAME" and val:
+                            chain_name = name or val
+                        elif key == "ACTIVE":
+                            active = bool(int(val)) if val else True
+                        elif key == "OPENED_DATE":
+                            opened_date = val if val else None
+                        elif key == "CLOSED_DATE":
+                            closed_date = val if val else None
+                        elif key == "SHARES":
+                            shares = int(val) if val else 0
+                        elif key == "SHARE_ENTRY":
+                            share_entry = float(val) if val else 0.0
                     continue
+
                 if row[0].lower() == "side":
                     continue  # Table header row
 
-                # Parse leg row: side, quantity, option_type, strike, entry_price, current_price, expiration_date, multiplier
+                # Parse leg row
                 if len(row) >= 5:
                     side_str = row[0].strip().upper()
                     qty = int(row[1])
@@ -226,6 +291,11 @@ class ChainStorage:
                     cur_price = float(row[5]) if len(row) > 5 and row[5].strip() else entry_price
                     exp_date = row[6].strip() if len(row) > 6 and row[6].strip() else None
                     mult = float(row[7]) if len(row) > 7 and row[7].strip() else 100.0
+                    action_str = row[8].strip() if len(row) > 8 and row[8].strip() else None
+                    t_date = row[9].strip() if len(row) > 9 and row[9].strip() else None
+                    comm = float(row[10]) if len(row) > 10 and row[10].strip() else 0.0
+                    fee_val = float(row[11]) if len(row) > 11 and row[11].strip() else 0.0
+                    occ_sym = row[12].strip() if len(row) > 12 and row[12].strip() else None
 
                     leg = OptionLeg(
                         strike=strike,
@@ -235,7 +305,12 @@ class ChainStorage:
                         entry_price=entry_price,
                         current_price=cur_price,
                         expiration_date=exp_date,
-                        multiplier=mult
+                        multiplier=mult,
+                        action=action_str,
+                        trade_date=t_date,
+                        commission=comm,
+                        fees=fee_val,
+                        occ_symbol=occ_sym
                     )
                     legs.append(leg)
 
@@ -244,5 +319,8 @@ class ChainStorage:
             name=chain_name,
             legs=legs,
             shares=shares,
-            share_entry_price=share_entry
+            share_entry_price=share_entry,
+            active=active,
+            opened_date=opened_date,
+            closed_date=closed_date
         )
