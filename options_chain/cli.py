@@ -110,6 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_p.add_argument("--chain-id", type=int, help="ID of saved chain")
     analyze_p.add_argument("--name", help="Name of saved chain")
 
+    # Command: analyze-source / analyze-sources
+    analyze_src_p = subparsers.add_parser("analyze-source", aliases=["analyze-sources"], help="Analyze raw Activity*.csv transaction reports in sources/ without modifying DB")
+    analyze_src_p.add_argument("--dir", default="sources", help="Directory containing Activity*.csv files")
+    analyze_src_p.add_argument("--symbol", help="Filter by underlying symbol (e.g. IBM)")
+
     # Command: payoff
     payoff_p = subparsers.add_parser("payoff", help="Show payoff matrix table across price points")
     payoff_p.add_argument("--chain-id", type=int, help="ID of saved chain")
@@ -180,6 +185,27 @@ def main_cli(args=None):
         )
         chain_id = storage.save_chain(chain)
         print(f"Created new options chain '{chain.name}' (ID: {chain_id}) for symbol {chain.symbol}.")
+
+    elif parsed.command in ("analyze-source", "analyze-sources"):
+        res = ActivityParser.import_sources_folder(sources_dir=parsed.dir, storage=None)
+        chains = res.get("chains", [])
+
+        if parsed.symbol:
+            target_sym = parsed.symbol.strip().upper()
+            chains = [c for c in chains if c.symbol.upper() == target_sym]
+
+        if not chains:
+            print(f"No Activity*.csv chains found in '{parsed.dir}'" + (f" matching symbol {parsed.symbol}" if parsed.symbol else "") + ".")
+            return
+
+        print("\n" + "=" * 65)
+        print(f"  SOURCE REPORT ANALYSIS DIRECTORY: {parsed.dir}")
+        print("=" * 65)
+        print(f"  Chains Found : {len(chains)}")
+        print("-" * 65)
+
+        for chain in chains:
+            print_chain_summary(chain)
 
     elif parsed.command == "import-sources":
         res = ActivityParser.import_sources_folder(sources_dir=parsed.dir, storage=storage)

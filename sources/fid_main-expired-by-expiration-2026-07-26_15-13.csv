@@ -1,0 +1,4 @@
+Name,Total Return %,Total Return $,Created At,Expiration,Net Debit/Credit,Chance,Max Loss,Max Profit,High,Low,Delta,Theta,Gamma,Vega,Rho,IV,Link,Group
+Symbol,Quantity,Entry Price,Current Price,Close Price,,,,,,,,,,,,,,
+TGT Short Put,65.09%, $	330.00 ,7/7/26 14:14,7/15/26 11:31, $	507.00 ,, $	(330.00), $	330.00 ,72.78%,-2.37%,,,,,,,Open,FID_MAIN
+.TGT260821P110,-3, $	1.69 ,, $	0.59 ,,,,,,,,,,,,,,
