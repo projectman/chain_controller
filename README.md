@@ -5,9 +5,9 @@
 ---
 
 ## Features
-- **Broker Activity Report Parser**: Automatically scans and parses Fidelity/broker activity reports (`sources/Activity*.csv`) containing `SELL_TO_OPEN`, `BUY_TO_OPEN`, `BUY_TO_CLOSE`, and `SELL_TO_CLOSE` trades.
+- **Broker Activity Report Parser & SHA-256 Deduplication**: Automatically scans and parses Fidelity/broker activity reports (`sources/Activity*.csv`) containing `SELL_TO_OPEN`, `BUY_TO_OPEN`, `BUY_TO_CLOSE`, and `SELL_TO_CLOSE` trades. Prevents duplicate data entry using deterministic `tx_hash` SHA-256 fingerprints.
 - **Active / Closed Lifecycle Tracking**: Automatically marks chains as `active` (`True`) or `closed` (`False`) based on net contract positions, tracking `opened_date` and `closed_date`.
-- **Data Storage**: Uses an **SQLite database (`options_chains.db`)** by default, with **CSV import/export capabilities**. See [DATABASE_README.md](DATABASE_README.md) for full database schema details.
+- **Data Storage**: Uses an **SQLite database (`options_chains.db`)** with a unique index on transaction hashes (`idx_legs_tx_hash`), with **CSV import/export capabilities**. See [DATABASE_README.md](DATABASE_README.md) for full database schema details.
 - **Mathematical Payoff Engine**: Piecewise linear root-finding algorithm to compute exact breakeven points at expiration.
 - **CLI Suite**: Command-line interface for creating, modifying, analyzing, exporting, importing, and parsing broker transaction reports.
 
@@ -15,14 +15,22 @@
 
 ## CLI Usage (`main.py`)
 
-### 1. Import Broker Activity Reports (`sources/Activity*.csv`)
+### 1. Import Broker Activity Reports with Automatic Deduplication (`sources/Activity*.csv`)
 ```bash
 python main.py import-sources
 ```
 **Example Output:**
 ```text
-Successfully imported/updated 1 options chain(s) from 'sources':
- - [CLOSED] IBM 2026-07-24 Chain (2 legs) | Opened: 2026-07-14 | Closed: 2026-07-16
+=================================================================
+  BROKER ACTIVITY REPORT IMPORT SUMMARY
+=================================================================
+  Files Processed     : 1
+  New Legs Imported   : 0
+  Skipped Duplicates  : 2
+  Chains Updated      : 1
+-----------------------------------------------------------------
+  - [CLOSED] IBM 2026-07-24 Chain      (2 legs) | Opened: 2026-07-14 | Closed: 2026-07-16
+=================================================================
 ```
 
 ### 2. List Active & Closed Chains
@@ -97,10 +105,10 @@ PYTHONPATH=. pytest tests/
 ---
 
 ## Documentation Links & Project Structure
-- [DATABASE_README.md](DATABASE_README.md) - SQLite database schema, tables (`chains`, `legs`), and ER diagram.
+- [DATABASE_README.md](DATABASE_README.md) - SQLite database schema, unique index `idx_legs_tx_hash`, tables (`chains`, `legs`), and ER diagram.
 - [main.py](main.py) - Main CLI entry point.
 - [options_chain/](options_chain/) - Core package containing data models, calculation engine, storage, activity parser, and CLI logic.
-  - [activity_parser.py](options_chain/activity_parser.py) - Fidelity `Activity*.csv` parser and OCC symbol decoder.
+  - [activity_parser.py](options_chain/activity_parser.py) - Fidelity `Activity*.csv` parser, SHA-256 deduplication, and OCC symbol decoder.
   - [models.py](options_chain/models.py) - Data classes (`OptionLeg`, `OptionsChain`).
   - [calculator.py](options_chain/calculator.py) - Payoff matrix, breakeven root finder, net outlay engine.
   - [storage.py](options_chain/storage.py) - SQLite database & CSV import/export.

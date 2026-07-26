@@ -48,6 +48,7 @@ def test_parse_fidelity_activity_csv():
     assert leg1.entry_price == 3.80
     assert leg1.commission == 0.65
     assert leg1.fees == 0.01
+    assert leg1.tx_hash is not None
 
     # Leg 2: BUY_TO_CLOSE 1 PUT 200 @ 1.80
     leg2 = ibm_chain.legs[1]
@@ -57,6 +58,7 @@ def test_parse_fidelity_activity_csv():
     assert leg2.entry_price == 1.80
     assert leg2.commission == 0.65
     assert leg2.fees == 0.01
+    assert leg2.tx_hash is not None
 
     # Net Outlay: -380 (credit) + 0.66 + 180 (debit) + 0.66 = -198.68 (Net Credit received / profit)
     assert pytest.approx(ibm_chain.net_initial_cost, 0.01) == -198.68
@@ -67,12 +69,34 @@ def test_import_sources_to_sqlite(tmp_path):
     storage = ChainStorage(db_path=db_file)
     sources_dir = os.path.join(os.path.dirname(__file__), "..", "sources")
 
-    imported = ActivityParser.import_sources_folder(sources_dir=sources_dir, storage=storage)
-    assert len(imported) >= 1
+    res = ActivityParser.import_sources_folder(sources_dir=sources_dir, storage=storage)
+    assert res["processed_files"] >= 1
+    assert res["new_legs"] == 2
+    assert res["skipped_duplicates"] == 0
 
-    saved = storage.get_chain_by_name(imported[0].name)
+    saved = storage.get_chain_by_name("IBM 2026-07-24 Chain")
     assert saved is not None
     assert saved.symbol == "IBM"
     assert saved.active is False
     assert saved.opened_date == "2026-07-14"
     assert saved.closed_date == "2026-07-16"
+
+
+def test_import_deduplication(tmp_path):
+    db_file = str(tmp_path / "test_dedup.db")
+    storage = ChainStorage(db_path=db_file)
+    sources_dir = os.path.join(os.path.dirname(__file__), "..", "sources")
+
+    # Run 1: Should import 2 new legs
+    res1 = ActivityParser.import_sources_folder(sources_dir=sources_dir, storage=storage)
+    assert res1["new_legs"] == 2
+    assert res1["skipped_duplicates"] == 0
+
+    # Run 2: Re-import same folder. Should skip all 2 legs as duplicates!
+    res2 = ActivityParser.import_sources_folder(sources_dir=sources_dir, storage=storage)
+    assert res2["new_legs"] == 0
+    assert res2["skipped_duplicates"] == 2
+
+    # Verify legs count in DB is still exactly 2
+    chain = storage.get_chain_by_name("IBM 2026-07-24 Chain")
+    assert len(chain.legs) == 2

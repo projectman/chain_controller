@@ -1,6 +1,6 @@
 # Options Chain Controller Database Documentation (`DATABASE_README.md`)
 
-The Options Chain Controller application uses an **SQLite database (`options_chains.db`)** to persist multi-leg options strategies, position headers, transaction records, and active/closed lifecycle states.
+The Options Chain Controller application uses an **SQLite database (`options_chains.db`)** to persist multi-leg options strategies, position headers, transaction records, SHA-256 deduplication fingerprints (`tx_hash`), and active/closed lifecycle states.
 
 ---
 
@@ -9,7 +9,18 @@ The Options Chain Controller application uses an **SQLite database (`options_cha
 - **Engine**: SQLite 3
 - **File**: [`options_chains.db`](file:///Users/olegbushmelev/Projects/chain_controller/options_chains.db)
 - **Integrity Constraints**: `FOREIGN KEY (chain_id) REFERENCES chains (id) ON DELETE CASCADE`
+- **Deduplication Index**: `CREATE UNIQUE INDEX idx_legs_tx_hash ON legs(tx_hash) WHERE tx_hash IS NOT NULL`
 - **ORM / Interface**: [`options_chain/storage.py`](file:///Users/olegbushmelev/Projects/chain_controller/options_chain/storage.py)
+
+---
+
+## Transaction Deduplication (`tx_hash`)
+
+To prevent duplicate entries when importing broker Activity reports repeatedly (`python main.py import-sources`), each imported transaction leg generates a deterministic **SHA-256 fingerprint**:
+
+$$\text{tx\_hash} = \text{SHA256}(\text{trade\_date} \mid \text{occ\_symbol} \mid \text{action} \mid \text{quantity} \mid \text{entry\_price} \mid \text{commission} \mid \text{fees})$$
+
+Before inserting any leg into SQLite, the import engine queries `idx_legs_tx_hash`. Existing hashes are skipped automatically as duplicates.
 
 ---
 
@@ -73,6 +84,7 @@ Stores each individual option transaction/position belonging to an options chain
 | `commission` | `REAL` | Broker commission paid (e.g. `0.65`) |
 | `fees` | `REAL` | Regulatory/exchange fees paid (e.g. `0.01`) |
 | `occ_symbol` | `TEXT` | Standard 21-character OCC option symbol (e.g. `IBM260724P200`) |
+| `tx_hash` | `TEXT` | **Unique SHA-256 fingerprint** for deduplication |
 
 #### SQL DDL Statement:
 ```sql
@@ -92,8 +104,11 @@ CREATE TABLE legs (
     commission REAL DEFAULT 0.0,
     fees REAL DEFAULT 0.0,
     occ_symbol TEXT,
+    tx_hash TEXT,
     FOREIGN KEY (chain_id) REFERENCES chains (id) ON DELETE CASCADE
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_legs_tx_hash ON legs(tx_hash) WHERE tx_hash IS NOT NULL;
 ```
 
 ---
@@ -133,5 +148,6 @@ erDiagram
         float commission
         float fees
         string occ_symbol
+        string tx_hash UK
     }
 ```

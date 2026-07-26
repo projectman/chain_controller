@@ -1,7 +1,7 @@
 import sqlite3
 import csv
 import os
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Set
 from .models import OptionsChain, OptionLeg, OptionType, OptionSide
 
 
@@ -55,6 +55,7 @@ class ChainStorage:
                     commission REAL DEFAULT 0.0,
                     fees REAL DEFAULT 0.0,
                     occ_symbol TEXT,
+                    tx_hash TEXT,
                     FOREIGN KEY (chain_id) REFERENCES chains (id) ON DELETE CASCADE
                 );
             """)
@@ -81,8 +82,23 @@ class ChainStorage:
                 cursor.execute("ALTER TABLE legs ADD COLUMN fees REAL DEFAULT 0.0")
             if 'occ_symbol' not in leg_cols:
                 cursor.execute("ALTER TABLE legs ADD COLUMN occ_symbol TEXT")
+            if 'tx_hash' not in leg_cols:
+                cursor.execute("ALTER TABLE legs ADD COLUMN tx_hash TEXT")
+
+            # Unique index for deduplicating imported transaction hashes
+            cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_legs_tx_hash 
+                ON legs(tx_hash) WHERE tx_hash IS NOT NULL;
+            """)
 
             conn.commit()
+
+    def get_existing_tx_hashes(self) -> Set[str]:
+        """Returns a set of all transaction hashes currently saved in SQLite database."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT tx_hash FROM legs WHERE tx_hash IS NOT NULL")
+            return {row['tx_hash'] for row in cursor.fetchall()}
 
     def save_chain(self, chain: OptionsChain) -> int:
         """Saves or updates an options chain in SQLite."""
@@ -121,12 +137,12 @@ class ChainStorage:
             # Insert legs
             for leg in chain.legs:
                 cursor.execute("""
-                    INSERT INTO legs (chain_id, strike, option_type, side, quantity, entry_price, current_price, expiration_date, multiplier, action, trade_date, commission, fees, occ_symbol)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO legs (chain_id, strike, option_type, side, quantity, entry_price, current_price, expiration_date, multiplier, action, trade_date, commission, fees, occ_symbol, tx_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     chain_id, leg.strike, leg.option_type.value, leg.side.value,
                     leg.quantity, leg.entry_price, leg.current_price, leg.expiration_date, leg.multiplier,
-                    leg.action, leg.trade_date, leg.commission, leg.fees, leg.occ_symbol
+                    leg.action, leg.trade_date, leg.commission, leg.fees, leg.occ_symbol, leg.tx_hash
                 ))
                 leg.id = cursor.lastrowid
 
@@ -174,7 +190,8 @@ class ChainStorage:
                     trade_date=leg_row['trade_date'],
                     commission=leg_row['commission'] or 0.0,
                     fees=leg_row['fees'] or 0.0,
-                    occ_symbol=leg_row['occ_symbol']
+                    occ_symbol=leg_row['occ_symbol'],
+                    tx_hash=leg_row['tx_hash']
                 )
                 chain.add_leg(leg)
 
@@ -220,7 +237,7 @@ class ChainStorage:
             # Metadata header lines
             writer.writerow(["# METADATA", "SYMBOL", chain.symbol, "NAME", chain.name or "", "ACTIVE", 1 if chain.active else 0, "OPENED_DATE", chain.opened_date or "", "CLOSED_DATE", chain.closed_date or "", "SHARES", chain.shares, "SHARE_ENTRY", chain.share_entry_price])
             # Leg columns
-            writer.writerow(["side", "quantity", "option_type", "strike", "entry_price", "current_price", "expiration_date", "multiplier", "action", "trade_date", "commission", "fees", "occ_symbol"])
+            writer.writerow(["side", "quantity", "option_type", "strike", "entry_price", "current_price", "expiration_date", "multiplier", "action", "trade_date", "commission", "fees", "occ_symbol", "tx_hash"])
             for leg in chain.legs:
                 writer.writerow([
                     leg.side.value,
@@ -235,7 +252,8 @@ class ChainStorage:
                     leg.trade_date or "",
                     leg.commission,
                     leg.fees,
-                    leg.occ_symbol or ""
+                    leg.occ_symbol or "",
+                    leg.tx_hash or ""
                 ])
 
     @staticmethod
@@ -296,6 +314,7 @@ class ChainStorage:
                     comm = float(row[10]) if len(row) > 10 and row[10].strip() else 0.0
                     fee_val = float(row[11]) if len(row) > 11 and row[11].strip() else 0.0
                     occ_sym = row[12].strip() if len(row) > 12 and row[12].strip() else None
+                    tx_h = row[13].strip() if len(row) > 13 and row[13].strip() else None
 
                     leg = OptionLeg(
                         strike=strike,
@@ -310,7 +329,8 @@ class ChainStorage:
                         trade_date=t_date,
                         commission=comm,
                         fees=fee_val,
-                        occ_symbol=occ_sym
+                        occ_symbol=occ_sym,
+                        tx_hash=tx_h
                     )
                     legs.append(leg)
 

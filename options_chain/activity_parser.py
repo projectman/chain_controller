@@ -3,7 +3,7 @@ import glob
 import os
 import re
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 from .models import OptionsChain, OptionLeg, OptionType, OptionSide, TradeAction
 from .storage import ChainStorage
 
@@ -183,13 +183,11 @@ class ActivityParser:
         # Construct OptionsChain objects
         chains: List[OptionsChain] = []
         for (symbol, expiration), tx_list in groups.items():
-            # Sort transactions by date
             tx_list.sort(key=lambda x: x["trade_date"])
 
             opened_date = tx_list[0]["trade_date"]
             latest_trade_date = tx_list[-1]["trade_date"]
 
-            # Calculate net contract position
             net_contracts = 0
             legs = []
 
@@ -218,7 +216,6 @@ class ActivityParser:
                 )
                 legs.append(leg)
 
-            # Active if net open contracts remain != 0
             is_active = (net_contracts != 0)
             closed_date = None if is_active else latest_trade_date
 
@@ -236,25 +233,85 @@ class ActivityParser:
         return chains
 
     @classmethod
-    def import_sources_folder(cls, sources_dir: str = "sources", storage: Optional[ChainStorage] = None) -> List[OptionsChain]:
-        """Scans sources directory for Activity*.csv files and saves parsed chains to SQLite storage."""
+    def import_sources_folder(cls, sources_dir: str = "sources", storage: Optional[ChainStorage] = None) -> Dict[str, Any]:
+        """
+        Scans sources directory for Activity*.csv files, deduplicates transactions via SHA-256 tx_hash,
+        and updates SQLite storage.
+        Returns dictionary with import statistics.
+        """
         if not os.path.exists(sources_dir):
-            return []
+            return {"processed_files": 0, "new_legs": 0, "skipped_duplicates": 0, "chains": []}
 
         pattern = os.path.join(sources_dir, "Activity*.csv")
         files = glob.glob(pattern)
 
-        all_chains: List[OptionsChain] = []
+        all_parsed_chains: List[OptionsChain] = []
         for f in sorted(files):
             chains = cls.parse_csv_file(f)
-            all_chains.extend(chains)
+            all_parsed_chains.extend(chains)
 
-        if storage:
-            for chain in all_chains:
-                # Check if chain already exists by name
-                existing = storage.get_chain_by_name(chain.name)
-                if existing:
-                    chain.id = existing.id
-                storage.save_chain(chain)
+        if not storage:
+            return {"processed_files": len(files), "new_legs": 0, "skipped_duplicates": 0, "chains": all_parsed_chains}
 
-        return all_chains
+        existing_hashes: Set[str] = storage.get_existing_tx_hashes()
+        new_legs_count = 0
+        skipped_duplicates_count = 0
+        saved_chains: List[OptionsChain] = []
+
+        for parsed_chain in all_parsed_chains:
+            # Check if target chain already exists in DB
+            db_chain = storage.get_chain_by_name(parsed_chain.name)
+            existing_legs = db_chain.legs if db_chain else []
+
+            # Filter legs by tx_hash deduplication
+            merged_legs_map: Dict[str, OptionLeg] = {}
+            for leg in existing_legs:
+                if leg.tx_hash:
+                    merged_legs_map[leg.tx_hash] = leg
+
+            for leg in parsed_chain.legs:
+                if leg.tx_hash in existing_hashes or leg.tx_hash in merged_legs_map:
+                    skipped_duplicates_count += 1
+                else:
+                    new_legs_count += 1
+                    existing_hashes.add(leg.tx_hash)
+                    merged_legs_map[leg.tx_hash] = leg
+
+            # Re-evaluate chain active state and dates based on all merged unique legs
+            merged_legs = list(merged_legs_map.values())
+            if not merged_legs:
+                continue
+
+            merged_legs.sort(key=lambda x: x.trade_date or "")
+            opened_date = merged_legs[0].trade_date
+            latest_trade_date = merged_legs[-1].trade_date
+
+            net_contracts = 0
+            for leg in merged_legs:
+                q = leg.quantity
+                if leg.action in (TradeAction.BUY_TO_OPEN.value, TradeAction.BUY_TO_CLOSE.value):
+                    net_contracts += q
+                else:
+                    net_contracts -= q
+
+            is_active = (net_contracts != 0)
+            closed_date = None if is_active else latest_trade_date
+
+            target_chain = OptionsChain(
+                id=db_chain.id if db_chain else None,
+                symbol=parsed_chain.symbol,
+                name=parsed_chain.name,
+                legs=merged_legs,
+                active=is_active,
+                opened_date=opened_date,
+                closed_date=closed_date
+            )
+            storage.save_chain(target_chain)
+            saved_chains.append(target_chain)
+
+        return {
+            "processed_files": len(files),
+            "new_legs": new_legs_count,
+            "skipped_duplicates": skipped_duplicates_count,
+            "chains": saved_chains
+        }

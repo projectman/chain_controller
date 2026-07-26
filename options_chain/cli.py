@@ -178,15 +178,24 @@ def main_cli(args=None):
         print(f"Created new options chain '{chain.name}' (ID: {chain_id}) for symbol {chain.symbol}.")
 
     elif parsed.command == "import-sources":
-        imported = ActivityParser.import_sources_folder(sources_dir=parsed.dir, storage=storage)
-        if not imported:
-            print(f"No Activity*.csv transaction files found or parsed in '{parsed.dir}'.")
+        res = ActivityParser.import_sources_folder(sources_dir=parsed.dir, storage=storage)
+        if res["processed_files"] == 0:
+            print(f"No Activity*.csv transaction files found in '{parsed.dir}'.")
             return
-        print(f"\nSuccessfully imported/updated {len(imported)} options chain(s) from '{parsed.dir}':")
-        for chain in imported:
+
+        print("\n" + "=" * 65)
+        print("  BROKER ACTIVITY REPORT IMPORT SUMMARY")
+        print("=" * 65)
+        print(f"  Files Processed     : {res['processed_files']}")
+        print(f"  New Legs Imported   : {res['new_legs']}")
+        print(f"  Skipped Duplicates  : {res['skipped_duplicates']}")
+        print(f"  Chains Updated      : {len(res['chains'])}")
+        print("-" * 65)
+
+        for chain in res["chains"]:
             st = "ACTIVE" if chain.active else "CLOSED"
-            print(f" - [{st}] {chain.name} ({len(chain.legs)} legs) | Opened: {chain.opened_date or 'N/A'} | Closed: {chain.closed_date or 'Open'}")
-        print()
+            print(f"  - [{st:<6}] {chain.name:<25} ({len(chain.legs)} legs) | Opened: {chain.opened_date or 'N/A'} | Closed: {chain.closed_date or 'Open'}")
+        print("=" * 65 + "\n")
 
     elif parsed.command in ("add-leg", "analyze", "payoff", "export"):
         chain = None

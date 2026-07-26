@@ -1,3 +1,4 @@
+import hashlib
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
@@ -35,6 +36,7 @@ class OptionLeg:
     commission: float = 0.0
     fees: float = 0.0
     occ_symbol: Optional[str] = None
+    tx_hash: Optional[str] = None
     id: Optional[int] = None
 
     def __post_init__(self):
@@ -44,6 +46,21 @@ class OptionLeg:
             self.option_type = OptionType(self.option_type.upper())
         if isinstance(self.side, str):
             self.side = OptionSide(self.side.upper())
+        if not self.tx_hash and self.trade_date and (self.occ_symbol or self.strike):
+            self.tx_hash = self.compute_tx_hash()
+
+    def compute_tx_hash(self) -> str:
+        """Generates a deterministic SHA-256 fingerprint for transaction deduplication."""
+        raw_str = (
+            f"{self.trade_date or ''}|"
+            f"{self.occ_symbol or self.option_type.value + str(self.strike)}|"
+            f"{self.action or self.side.value}|"
+            f"{self.quantity}|"
+            f"{self.entry_price:.4f}|"
+            f"{self.commission:.4f}|"
+            f"{self.fees:.4f}"
+        )
+        return hashlib.sha256(raw_str.encode('utf-8')).hexdigest()
 
     @property
     def side_factor(self) -> int:
