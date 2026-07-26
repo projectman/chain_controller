@@ -228,6 +228,14 @@ class ChainStorage:
             conn.commit()
             return cursor.rowcount > 0
 
+    def delete_leg(self, leg_id: int) -> bool:
+        """Deletes a single leg by leg ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM legs WHERE id = ?", (leg_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
     @staticmethod
     def export_to_csv(chain: OptionsChain, filepath: str) -> None:
         """Exports an options chain to a CSV file."""

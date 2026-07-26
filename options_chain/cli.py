@@ -136,6 +136,10 @@ def build_parser() -> argparse.ArgumentParser:
     del_p = subparsers.add_parser("delete", help="Delete a chain from database")
     del_p.add_argument("--chain-id", type=int, required=True, help="ID of saved chain to delete")
 
+    # Command: delete-leg
+    del_leg_p = subparsers.add_parser("delete-leg", help="Delete a leg from database by leg ID")
+    del_leg_p.add_argument("--leg-id", type=int, required=True, help="ID of leg to delete")
+
     return parser
 
 
@@ -247,6 +251,13 @@ def main_cli(args=None):
             print(f"Successfully deleted options chain ID {parsed.chain_id}.")
         else:
             print(f"Chain ID {parsed.chain_id} not found.")
+
+    elif parsed.command == "delete-leg":
+        success = storage.delete_leg(parsed.leg_id)
+        if success:
+            print(f"Successfully deleted leg ID {parsed.leg_id}.")
+        else:
+            print(f"Leg ID {parsed.leg_id} not found.")
 
 
 if __name__ == "__main__":
