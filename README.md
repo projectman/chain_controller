@@ -5,7 +5,7 @@
 ---
 
 ## Features
-- **Data Storage**: Uses an **SQLite database (`options_chains.db`)** by default, with **CSV import/export capabilities**.
+- **Data Storage**: Uses an **SQLite database (`options_chains.db`)** by default, with **CSV import/export capabilities**. See [DATABASE_README.md](DATABASE_README.md) for full database schema details.
 - **Multi-Leg Support**: Supports Calls, Puts, Long (BUY), Short (SELL), and underlying stock share positions.
 - **Mathematical Payoff Engine**: Piecewise linear root-finding algorithm to compute exact breakeven points at expiration.
 - **CLI Suite**: Command-line interface for creating, modifying, analyzing, exporting, and importing options strategies.
@@ -85,12 +85,13 @@ PYTHONPATH=. pytest tests/
 
 ---
 
-## Project Structure
-- [main.py](file:///Users/olegbushmelev/Projects/barchart_interaction/projects/chain_controller/main.py) - Main CLI entry point.
-- [options_chain/](file:///Users/olegbushmelev/Projects/barchart_interaction/projects/chain_controller/options_chain/) - Core package containing data models, calculation engine, storage, and CLI logic.
-  - [models.py](file:///Users/olegbushmelev/Projects/barchart_interaction/projects/chain_controller/options_chain/models.py) - Data classes (`OptionLeg`, `OptionsChain`).
-  - [calculator.py](file:///Users/olegbushmelev/Projects/barchart_interaction/projects/chain_controller/options_chain/calculator.py) - Payoff matrix, breakeven root finder, net outlay engine.
-  - [storage.py](file:///Users/olegbushmelev/Projects/barchart_interaction/projects/chain_controller/options_chain/storage.py) - SQLite database & CSV import/export.
-  - [cli.py](file:///Users/olegbushmelev/Projects/barchart_interaction/projects/chain_controller/options_chain/cli.py) - CLI command implementation.
-- [tests/](file:///Users/olegbushmelev/Projects/barchart_interaction/projects/chain_controller/tests/) - Comprehensive unit tests (`test_calculator.py`, `test_storage.py`).
-- [requirements.txt](file:///Users/olegbushmelev/Projects/barchart_interaction/projects/chain_controller/requirements.txt) - Dependencies.
+## Documentation Links & Project Structure
+- [DATABASE_README.md](DATABASE_README.md) - SQLite database schema, tables (`chains`, `legs`), and ER diagram.
+- [main.py](main.py) - Main CLI entry point.
+- [options_chain/](options_chain/) - Core package containing data models, calculation engine, storage, and CLI logic.
+  - [models.py](options_chain/models.py) - Data classes (`OptionLeg`, `OptionsChain`).
+  - [calculator.py](options_chain/calculator.py) - Payoff matrix, breakeven root finder, net outlay engine.
+  - [storage.py](options_chain/storage.py) - SQLite database & CSV import/export.
+  - [cli.py](options_chain/cli.py) - CLI command implementation.
+- [tests/](tests/) - Comprehensive unit tests (`test_calculator.py`, `test_storage.py`).
+- [requirements.txt](requirements.txt) - Dependencies.
