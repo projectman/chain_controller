@@ -9,13 +9,25 @@
   <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
     <div>
       <h1 class="text-2xl font-bold text-white flex items-center gap-2">
-        <span>📋</span> Saved Strategy Positions & Chains
+        <span>📋</span> Saved Positions & Strategy Chains
       </h1>
       <p class="text-sm text-slate-400 mt-1">
-        Explore options chains saved in <code class="bg-slate-900 px-1.5 py-0.5 rounded text-indigo-300">options_chains.db</code>. Filter by Active, Closed, or Deleted status.
+        Explore options chains and individual positions saved in <code class="bg-slate-900 px-1.5 py-0.5 rounded text-indigo-300">options_chains.db</code>.
       </p>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-3">
+      <!-- View Mode Switcher: Chains vs Simple -->
+      <div class="inline-flex p-1 bg-slate-900/90 rounded-lg border border-slate-700/80 text-xs font-semibold">
+        <a href="/chains?view=chains&status={{ current_status }}{% if search %}&q={{ search }}{% endif %}" 
+           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md transition {% if view_mode == 'chains' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+          <span>🔀</span> Chains
+        </a>
+        <a href="/chains?view=simple&status={{ current_status }}{% if search %}&q={{ search }}{% endif %}" 
+           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md transition {% if view_mode == 'simple' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+          <span>📄</span> Simple
+        </a>
+      </div>
+
       <a href="/import" class="inline-flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium px-4 py-2 rounded-lg text-sm transition">
         📥 Import New Activity
       </a>
@@ -30,22 +42,23 @@
     
     <!-- 4-State Selector: All / Active / Closed / Deleted -->
     <div class="inline-flex p-1 bg-slate-900/80 rounded-lg border border-slate-700/60 text-xs font-semibold">
-      <a href="/chains?status=all{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'all' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+      <a href="/chains?view={{ view_mode }}&status=all{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'all' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
         All ({{ counts.all }})
       </a>
-      <a href="/chains?status=active{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'active' %}bg-emerald-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+      <a href="/chains?view={{ view_mode }}&status=active{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'active' %}bg-emerald-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
         Active ({{ counts.active }})
       </a>
-      <a href="/chains?status=closed{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'closed' %}bg-slate-700 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+      <a href="/chains?view={{ view_mode }}&status=closed{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'closed' %}bg-slate-700 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
         Closed ({{ counts.closed }})
       </a>
-      <a href="/chains?status=deleted{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'deleted' %}bg-rose-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+      <a href="/chains?view={{ view_mode }}&status=deleted{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'deleted' %}bg-rose-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
         Deleted ({{ counts.deleted }})
       </a>
     </div>
 
     <!-- Search Input -->
     <form method="GET" action="/chains" class="relative max-w-xs w-full">
+      <input type="hidden" name="view" value="{{ view_mode }}">
       <input type="hidden" name="status" value="{{ current_status }}">
       <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
         <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -60,14 +73,15 @@
         class="w-full pl-9 pr-8 py-1.5 bg-slate-900/90 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition"
       >
       {% if search %}
-      <a href="/chains?status={{ current_status }}" class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-white text-xs">
+      <a href="/chains?view={{ view_mode }}&status={{ current_status }}" class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-white text-xs">
         ✕
       </a>
       {% endif %}
     </form>
   </div>
 
-  <!-- Positions Table -->
+  {% if view_mode == 'chains' %}
+  <!-- ==================== 1. CHAINS VIEW TABLE ==================== -->
   <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl overflow-hidden shadow-xl">
     <div class="overflow-x-auto">
       <table class="w-full text-left text-sm text-slate-300">
@@ -89,7 +103,7 @@
           {% if not chains %}
           <tr>
             <td colspan="10" class="px-6 py-12 text-center text-slate-400">
-              No strategy positions found in <strong class="text-white uppercase">{{ current_status }}</strong>.
+              No strategy chains found in <strong class="text-white uppercase">{{ current_status }}</strong>.
             </td>
           </tr>
           {% endif %}
@@ -136,14 +150,14 @@
             <td class="px-4 py-3.5 text-center" onclick="event.stopPropagation()">
               <div class="flex items-center justify-center gap-2">
                 {% if c.deleted %}
-                <!-- Revert Button -->
-                <button onclick="revertChain({{ c.id }}, event)" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/40 transition shadow-sm" title="Revert Position">
-                  <span>↩️</span> Revert
+                <!-- Revert Button: Icon Only -->
+                <button onclick="revertChain({{ c.id }}, event)" class="p-1.5 text-xs font-semibold rounded-lg bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/40 transition shadow-sm" title="Revert Chain">
+                  ↩️
                 </button>
                 {% else %}
-                <!-- Delete Button -->
-                <button onclick="deleteChain({{ c.id }}, event)" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md bg-rose-500/10 hover:bg-rose-500/30 text-rose-400 hover:text-rose-200 border border-rose-500/20 transition" title="Delete Position">
-                  <span>🗑️</span> Delete
+                <!-- Delete Button: Icon Only -->
+                <button onclick="deleteChain({{ c.id }}, event)" class="p-1.5 text-xs font-medium rounded-lg bg-rose-500/10 hover:bg-rose-500/30 text-rose-400 hover:text-rose-200 border border-rose-500/20 transition" title="Delete Chain">
+                  🗑️
                 </button>
                 {% endif %}
 
@@ -221,6 +235,99 @@
     </div>
   </div>
 
+  {% else %}
+  <!-- ==================== 2. SIMPLE POSITIONS VIEW TABLE ==================== -->
+  <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl overflow-hidden shadow-xl">
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-sm text-slate-300">
+        <thead class="bg-slate-900/80 text-slate-400 uppercase tracking-wider text-xs border-b border-slate-700/80">
+          <tr>
+            <th class="px-3 py-3.5">Leg ID</th>
+            <th class="px-3 py-3.5">Status</th>
+            <th class="px-3 py-3.5">Symbol</th>
+            <th class="px-3 py-3.5">Strategy Chain</th>
+            <th class="px-3 py-3.5">Action</th>
+            <th class="px-3 py-3.5">Side</th>
+            <th class="px-3 py-3.5">Type</th>
+            <th class="px-3 py-3.5">Strike</th>
+            <th class="px-3 py-3.5">Expiration</th>
+            <th class="px-3 py-3.5 text-center">Contracts</th>
+            <th class="px-3 py-3.5 text-right">Price</th>
+            <th class="px-3 py-3.5">Trade Date</th>
+            <th class="px-3 py-3.5 text-right">Net Outlay</th>
+            <th class="px-3 py-3.5 text-center">Action</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-700/50">
+          {% if not positions %}
+          <tr>
+            <td colspan="14" class="px-6 py-12 text-center text-slate-400">
+              No individual positions found in <strong class="text-white uppercase">{{ current_status }}</strong>.
+            </td>
+          </tr>
+          {% endif %}
+
+          {% for p in positions %}
+          <tr id="leg-row-{{ p.id }}" class="hover:bg-slate-700/30 transition">
+            <td class="px-3 py-3 font-mono text-xs text-slate-400">#{{ p.id }}</td>
+            <td class="px-3 py-3">
+              {% if p.status == 'DELETED' %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                DELETED
+              </span>
+              {% elif p.status == 'ACTIVE' %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                ACTIVE
+              </span>
+              {% else %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-600/30 text-slate-400 border border-slate-600/50">
+                CLOSED
+              </span>
+              {% endif %}
+            </td>
+            <td class="px-3 py-3 font-bold text-white text-base">{{ p.symbol }}</td>
+            <td class="px-3 py-3 font-medium text-xs text-slate-300 max-w-[160px] truncate" title="{{ p.chain_name }}">
+              {{ p.chain_name }}
+            </td>
+            <td class="px-3 py-3 font-mono text-xs font-medium {% if 'OPEN' in (p.action or '') %}text-indigo-400{% else %}text-amber-400{% endif %}">
+              {{ p.action or '-' }}
+            </td>
+            <td class="px-3 py-3">
+              <span class="px-1.5 py-0.5 rounded font-bold text-[10px] {% if p.side == 'BUY' %}bg-blue-500/20 text-blue-400{% else %}bg-purple-500/20 text-purple-400{% endif %}">
+                {{ p.side }}
+              </span>
+            </td>
+            <td class="px-3 py-3 font-semibold text-white text-xs">{{ p.option_type }}</td>
+            <td class="px-3 py-3 font-mono font-bold text-white text-xs">${{ "%.2f"|format(p.strike) }}</td>
+            <td class="px-3 py-3 font-mono text-xs text-slate-400">{{ p.expiration_date or '-' }}</td>
+            <td class="px-3 py-3 text-center font-bold text-xs">{{ p.quantity }}</td>
+            <td class="px-3 py-3 text-right font-mono text-xs">${{ "%.2f"|format(p.entry_price) }}</td>
+            <td class="px-3 py-3 font-mono text-xs text-slate-400">{{ p.trade_date or '-' }}</td>
+            <td class="px-3 py-3 text-right font-mono font-bold text-xs {% if p.outlay < 0 %}text-emerald-400{% else %}text-amber-400{% endif %}">
+              {% if p.outlay < 0 %}-${{ "%.2f"|format(p.outlay|abs) }}{% else %}${{ "%.2f"|format(p.outlay) }}{% endif %}
+            </td>
+            <td class="px-3 py-3 text-center">
+              {% if p.deleted %}
+              <!-- Revert Button: Icon Only -->
+              <button onclick="revertLeg({{ p.id }}, event)" class="p-1.5 text-xs font-semibold rounded-lg bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/40 transition shadow-sm" title="Revert Position">
+                ↩️
+              </button>
+              {% else %}
+              <!-- Delete Button: Icon Only -->
+              <button onclick="deleteLeg({{ p.id }}, event)" class="p-1.5 text-xs font-medium rounded-lg bg-rose-500/10 hover:bg-rose-500/30 text-rose-400 hover:text-rose-200 border border-rose-500/20 transition" title="Delete Position">
+                🗑️
+              </button>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
 </div>
 {% endblock %}
 
@@ -229,6 +336,7 @@
 function toggleDetails(chainId) {
   const row = document.getElementById(`details-${chainId}`);
   const chevron = document.getElementById(`chevron-${chainId}`);
+  if (!row || !chevron) return;
   if (row.classList.contains("hidden")) {
     row.classList.remove("hidden");
     chevron.classList.add("rotate-180");
@@ -248,9 +356,10 @@ function showBanner(message, isSuccess = true) {
   setTimeout(() => banner.classList.add("hidden"), 4000);
 }
 
+// Chain Actions (Chains Mode)
 async function deleteChain(chainId, event) {
   if (event) event.stopPropagation();
-  if (!confirm(`Are you sure you want to delete strategy position #${chainId}? It can be restored anytime from the Deleted tab.`)) {
+  if (!confirm(`Are you sure you want to delete strategy chain #${chainId}? It can be restored anytime from the Deleted tab.`)) {
     return;
   }
 
@@ -258,11 +367,10 @@ async function deleteChain(chainId, event) {
     const res = await fetch(`/api/chains/${chainId}/delete`, { method: "POST" });
     const data = await res.json();
     if (data.success) {
-      showBanner(data.message || `Position #${chainId} moved to Deleted.`);
-      // Reload page to refresh counters and table
-      setTimeout(() => location.reload(), 600);
+      showBanner(data.message || `Chain #${chainId} moved to Deleted.`);
+      setTimeout(() => location.reload(), 500);
     } else {
-      showBanner(data.error || "Failed to delete position", false);
+      showBanner(data.error || "Failed to delete chain", false);
     }
   } catch (err) {
     showBanner(`Network error: ${err.message}`, false);
@@ -276,9 +384,46 @@ async function revertChain(chainId, event) {
     const res = await fetch(`/api/chains/${chainId}/revert`, { method: "POST" });
     const data = await res.json();
     if (data.success) {
-      showBanner(data.message || `Position #${chainId} reverted successfully.`);
-      // Reload page to refresh counters and table
-      setTimeout(() => location.reload(), 600);
+      showBanner(data.message || `Chain #${chainId} reverted successfully.`);
+      setTimeout(() => location.reload(), 500);
+    } else {
+      showBanner(data.error || "Failed to revert chain", false);
+    }
+  } catch (err) {
+    showBanner(`Network error: ${err.message}`, false);
+  }
+}
+
+// Leg Actions (Simple Mode)
+async function deleteLeg(legId, event) {
+  if (event) event.stopPropagation();
+  if (!confirm(`Are you sure you want to delete position #${legId}? It can be restored anytime from the Deleted tab.`)) {
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/legs/${legId}/delete`, { method: "POST" });
+    const data = await res.json();
+    if (data.success) {
+      showBanner(data.message || `Position #${legId} moved to Deleted.`);
+      setTimeout(() => location.reload(), 500);
+    } else {
+      showBanner(data.error || "Failed to delete position", false);
+    }
+  } catch (err) {
+    showBanner(`Network error: ${err.message}`, false);
+  }
+}
+
+async function revertLeg(legId, event) {
+  if (event) event.stopPropagation();
+
+  try {
+    const res = await fetch(`/api/legs/${legId}/revert`, { method: "POST" });
+    const data = await res.json();
+    if (data.success) {
+      showBanner(data.message || `Position #${legId} reverted successfully.`);
+      setTimeout(() => location.reload(), 500);
     } else {
       showBanner(data.error || "Failed to revert position", false);
     }

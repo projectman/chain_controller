@@ -110,3 +110,60 @@ def test_csv_export_and_import(tmp_path):
     assert imported_chain.legs[0].option_type == OptionType.CALL
     assert imported_chain.legs[1].option_type == OptionType.PUT
     assert imported_chain.net_initial_cost == (6.0 * 100 + 5.5 * 100 + 50 * 160.0)
+
+
+def test_simple_positions_and_leg_soft_delete(tmp_path):
+    db_file = str(tmp_path / "test_simple.db")
+    storage = ChainStorage(db_path=db_file)
+
+    chain = OptionsChain(symbol="MSFT", name="MSFT 2026-08-10 Strategy", active=True, opened_date="2026-08-10")
+    chain.add_leg(OptionLeg(
+        strike=400.0,
+        option_type=OptionType.CALL,
+        side=OptionSide.BUY,
+        quantity=1,
+        entry_price=10.0,
+        action="BUY_TO_OPEN",
+        trade_date="2026-08-10"
+    ))
+    chain.add_leg(OptionLeg(
+        strike=420.0,
+        option_type=OptionType.CALL,
+        side=OptionSide.SELL,
+        quantity=1,
+        entry_price=4.0,
+        action="SELL_TO_OPEN",
+        trade_date="2026-08-10"
+    ))
+    chain_id = storage.save_chain(chain)
+    reloaded = storage.get_chain(chain_id)
+    leg1_id = reloaded.legs[0].id
+    leg2_id = reloaded.legs[1].id
+
+    # List simple positions
+    positions, counts = storage.list_simple_positions(status="all")
+    assert len(positions) == 2
+    assert counts["all"] == 2
+    assert counts["active"] == 2
+    assert counts["deleted"] == 0
+
+    # Soft delete leg 1
+    assert storage.soft_delete_leg(leg1_id) is True
+
+    # Check counts after soft delete
+    positions_after, counts_after = storage.list_simple_positions(status="all")
+    assert len(positions_after) == 1
+    assert counts_after["all"] == 1
+    assert counts_after["deleted"] == 1
+
+    # Check deleted tab
+    deleted_positions, _ = storage.list_simple_positions(status="deleted")
+    assert len(deleted_positions) == 1
+    assert deleted_positions[0]["id"] == leg1_id
+    assert deleted_positions[0]["status"] == "DELETED"
+
+    # Revert leg 1
+    assert storage.revert_leg(leg1_id) is True
+    reverted_positions, counts_rev = storage.list_simple_positions(status="all")
+    assert len(reverted_positions) == 2
+    assert counts_rev["deleted"] == 0

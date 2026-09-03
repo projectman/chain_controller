@@ -37,6 +37,7 @@ class OptionLeg:
     fees: float = 0.0
     occ_symbol: Optional[str] = None
     tx_hash: Optional[str] = None
+    deleted: bool = False
     id: Optional[int] = None
 
     def __post_init__(self):

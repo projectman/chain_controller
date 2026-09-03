@@ -133,3 +133,27 @@ def test_delete_and_revert_endpoints(client):
     # 5. Check it is restored back into active
     res_restored = client.get("/chains?status=active")
     assert "AAPL 2026-08-31 Strategy" in res_restored.get_data(as_text=True)
+
+
+def test_simple_view_and_leg_delete_revert(client):
+    # 1. Simple view all
+    res_simple = client.get("/chains?view=simple&status=all")
+    assert res_simple.status_code == 200
+    html = res_simple.get_data(as_text=True)
+    assert "Simple" in html
+    assert "Leg ID" in html
+
+    # 2. Delete leg 1
+    del_leg_res = client.post("/api/legs/1/delete")
+    assert del_leg_res.status_code == 200
+    assert del_leg_res.get_json()["success"] is True
+
+    # 3. Check leg 1 in deleted tab
+    res_del_simple = client.get("/chains?view=simple&status=deleted")
+    assert res_del_simple.status_code == 200
+    assert "#1" in res_del_simple.get_data(as_text=True)
+
+    # 4. Revert leg 1
+    rev_leg_res = client.post("/api/legs/1/revert")
+    assert rev_leg_res.status_code == 200
+    assert rev_leg_res.get_json()["success"] is True

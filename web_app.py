@@ -133,18 +133,53 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
 
+    @app.route("/api/legs/<int:leg_id>/delete", methods=["POST"])
+    def api_delete_leg(leg_id: int):
+        try:
+            success = storage.soft_delete_leg(leg_id)
+            if success:
+                return jsonify({"success": True, "message": f"Leg #{leg_id} moved to Deleted."})
+            return jsonify({"success": False, "error": "Leg not found"}), 404
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/legs/<int:leg_id>/revert", methods=["POST"])
+    def api_revert_leg(leg_id: int):
+        try:
+            success = storage.revert_leg(leg_id)
+            if success:
+                return jsonify({"success": True, "message": f"Leg #{leg_id} reverted successfully."})
+            return jsonify({"success": False, "error": "Leg not found"}), 404
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
     @app.route("/chains")
     def chains_page():
+        view_mode = request.args.get("view", "chains").lower()
+        if view_mode not in ("chains", "simple"):
+            view_mode = "chains"
+
         status_filter = request.args.get("status", "all").lower()
         search_query = request.args.get("q", "").strip().upper()
 
-        # Compute counts for all selector tabs
+        if view_mode == "simple":
+            positions, counts = storage.list_simple_positions(status=status_filter, search=search_query)
+            return render_template(
+                "chains_list.html",
+                active_page="chains",
+                view_mode="simple",
+                current_status=status_filter,
+                search=search_query,
+                counts=counts,
+                positions=positions
+            )
+
+        # Chains view mode:
         count_all = len(storage.list_chains(status="all"))
         count_active = len(storage.list_chains(status="active"))
         count_closed = len(storage.list_chains(status="closed"))
         count_deleted = len(storage.list_chains(status="deleted"))
 
-        # Fetch chains based on selected status filter
         matching_meta = storage.list_chains(status=status_filter if status_filter in ("active", "closed", "deleted") else "all")
         all_chains: List[OptionsChain] = []
         for meta in matching_meta:
@@ -152,7 +187,6 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
             if loaded:
                 all_chains.append(loaded)
 
-        # Apply search query filter if provided
         filtered = all_chains
         if search_query:
             filtered = [
@@ -165,6 +199,7 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
         return render_template(
             "chains_list.html",
             active_page="chains",
+            view_mode="chains",
             current_status=status_filter,
             search=search_query,
             counts={

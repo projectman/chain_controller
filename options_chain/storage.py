@@ -58,6 +58,7 @@ class ChainStorage:
                     fees REAL DEFAULT 0.0,
                     occ_symbol TEXT,
                     tx_hash TEXT,
+                    deleted INTEGER DEFAULT 0,
                     FOREIGN KEY (chain_id) REFERENCES chains (id) ON DELETE CASCADE
                 );
             """)
@@ -88,6 +89,8 @@ class ChainStorage:
                 cursor.execute("ALTER TABLE legs ADD COLUMN occ_symbol TEXT")
             if 'tx_hash' not in leg_cols:
                 cursor.execute("ALTER TABLE legs ADD COLUMN tx_hash TEXT")
+            if 'deleted' not in leg_cols:
+                cursor.execute("ALTER TABLE legs ADD COLUMN deleted INTEGER DEFAULT 0")
 
             # Unique index for deduplicating imported transaction hashes
             cursor.execute("""
@@ -152,13 +155,14 @@ class ChainStorage:
 
             # Insert legs
             for leg in chain.legs:
+                leg_deleted = 1 if getattr(leg, 'deleted', False) else 0
                 cursor.execute("""
-                    INSERT OR REPLACE INTO legs (chain_id, strike, option_type, side, quantity, entry_price, current_price, expiration_date, multiplier, action, trade_date, commission, fees, occ_symbol, tx_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO legs (chain_id, strike, option_type, side, quantity, entry_price, current_price, expiration_date, multiplier, action, trade_date, commission, fees, occ_symbol, tx_hash, deleted)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     chain_id, leg.strike, leg.option_type.value, leg.side.value,
                     leg.quantity, leg.entry_price, leg.current_price, leg.expiration_date, leg.multiplier,
-                    leg.action, leg.trade_date, leg.commission, leg.fees, leg.occ_symbol, leg.tx_hash
+                    leg.action, leg.trade_date, leg.commission, leg.fees, leg.occ_symbol, leg.tx_hash, leg_deleted
                 ))
                 leg.id = cursor.lastrowid
 
@@ -194,6 +198,7 @@ class ChainStorage:
 
             cursor.execute("SELECT * FROM legs WHERE chain_id = ?", (chain_id,))
             for leg_row in cursor.fetchall():
+                leg_deleted = bool(leg_row['deleted']) if 'deleted' in leg_row.keys() and leg_row['deleted'] is not None else False
                 leg = OptionLeg(
                     id=leg_row['id'],
                     strike=leg_row['strike'],
@@ -209,7 +214,8 @@ class ChainStorage:
                     commission=leg_row['commission'] or 0.0,
                     fees=leg_row['fees'] or 0.0,
                     occ_symbol=leg_row['occ_symbol'],
-                    tx_hash=leg_row['tx_hash']
+                    tx_hash=leg_row['tx_hash'],
+                    deleted=leg_deleted
                 )
                 chain.add_leg(leg)
 
@@ -326,6 +332,142 @@ class ChainStorage:
             """, (1 if is_active else 0, None if is_active else latest_closing_date, chain_id))
             conn.commit()
             return cursor.rowcount > 0
+
+    def soft_delete_leg(self, leg_id: int) -> bool:
+        """Marks an individual leg as deleted (soft delete)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE legs SET deleted = 1 WHERE id = ?", (leg_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def revert_leg(self, leg_id: int) -> bool:
+        """Reverts a deleted leg (sets deleted = 0)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE legs SET deleted = 0 WHERE id = ?", (leg_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def list_simple_positions(
+        self, 
+        status: str = "all", 
+        search: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+        """
+        Retrieves a flat list of individual option legs/positions with parent chain metadata.
+        Returns (filtered_positions, counts_dict).
+        """
+        from .activity_parser import ActivityParser
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT 
+                    l.id, l.chain_id, l.strike, l.option_type, l.side, l.quantity,
+                    l.entry_price, l.current_price, l.expiration_date, l.multiplier, l.action,
+                    l.trade_date, l.commission, l.fees, l.occ_symbol, l.deleted as leg_deleted,
+                    c.symbol, c.name as chain_name, c.active as chain_active, c.deleted as chain_deleted
+                FROM legs l
+                JOIN chains c ON l.chain_id = c.id
+                ORDER BY l.trade_date DESC, l.id DESC
+            """)
+            raw_rows = cursor.fetchall()
+
+        # Cache chains to check remaining contract balances
+        chains_cache: Dict[int, Optional[OptionsChain]] = {}
+
+        positions: List[Dict[str, Any]] = []
+        counts = {"all": 0, "active": 0, "closed": 0, "deleted": 0}
+
+        for row in raw_rows:
+            leg_id = row['id']
+            chain_id = row['chain_id']
+            leg_deleted = bool(row['leg_deleted'])
+            chain_deleted = bool(row['chain_deleted'])
+            is_deleted = leg_deleted or chain_deleted
+
+            # Calculate leg outlay (positive for debit/cost, negative for credit/proceeds)
+            mult = row['multiplier'] or 100.0
+            side_str = (row['side'] or 'BUY').upper()
+            qty = row['quantity'] or 0
+            price = row['entry_price'] or 0.0
+            fees = (row['commission'] or 0.0) + (row['fees'] or 0.0)
+            
+            if side_str == "BUY":
+                outlay = (price * qty * mult) + fees
+            else:
+                outlay = -(price * qty * mult) + fees
+
+            # Determine leg status
+            if is_deleted:
+                leg_status = "DELETED"
+            elif "CLOSE" in (row['action'] or ""):
+                leg_status = "CLOSED"
+            elif not row['chain_active']:
+                leg_status = "CLOSED"
+            else:
+                if chain_id not in chains_cache:
+                    chains_cache[chain_id] = self.get_chain(chain_id)
+                ch = chains_cache[chain_id]
+                if ch and row['occ_symbol']:
+                    rem_l, rem_s = ActivityParser.get_open_contract_balance(ch, row['occ_symbol'])
+                    leg_status = "ACTIVE" if (rem_l > 0 or rem_s > 0) else "CLOSED"
+                else:
+                    leg_status = "ACTIVE" if ("OPEN" in (row['action'] or "") or not row['action']) else "CLOSED"
+
+            # Increment status counts
+            if is_deleted:
+                counts["deleted"] += 1
+            else:
+                counts["all"] += 1
+                if leg_status == "ACTIVE":
+                    counts["active"] += 1
+                else:
+                    counts["closed"] += 1
+
+            pos = {
+                "id": leg_id,
+                "chain_id": chain_id,
+                "symbol": row['symbol'],
+                "chain_name": row['chain_name'],
+                "strike": row['strike'],
+                "option_type": row['option_type'],
+                "side": side_str,
+                "quantity": qty,
+                "entry_price": price,
+                "current_price": row['current_price'],
+                "expiration_date": row['expiration_date'],
+                "multiplier": mult,
+                "action": row['action'],
+                "trade_date": row['trade_date'],
+                "commissions_and_fees": fees,
+                "occ_symbol": row['occ_symbol'],
+                "outlay": outlay,
+                "status": leg_status,
+                "deleted": is_deleted
+            }
+            positions.append(pos)
+
+        # Apply status filtering
+        if status == "active":
+            filtered = [p for p in positions if not p["deleted"] and p["status"] == "ACTIVE"]
+        elif status == "closed":
+            filtered = [p for p in positions if not p["deleted"] and p["status"] == "CLOSED"]
+        elif status == "deleted":
+            filtered = [p for p in positions if p["deleted"]]
+        else:
+            filtered = [p for p in positions if not p["deleted"]]
+
+        # Apply search query filtering
+        if search:
+            q = search.strip().upper()
+            filtered = [
+                p for p in filtered
+                if q in (p["symbol"] or "").upper() or q in (p["chain_name"] or "").upper() or q in (p["occ_symbol"] or "").upper()
+            ]
+
+        return filtered, counts
 
     def delete_chain(self, chain_id: int) -> bool:
         """Deletes a chain and its associated legs (hard delete)."""

@@ -87,6 +87,7 @@ Stores each individual option transaction/position belonging to an options chain
 | `fees` | `REAL` | Regulatory/exchange fees paid (e.g. `0.01`) |
 | `occ_symbol` | `TEXT` | Standard 21-character OCC option symbol (e.g. `IBM260724P200`) |
 | `tx_hash` | `TEXT` | **Unique SHA-256 fingerprint** for deduplication |
+| `deleted` | `INTEGER` | `1` for soft-deleted legs, `0` for active/closed (default `0`) |
 
 #### SQL DDL Statement:
 ```sql
@@ -107,6 +108,7 @@ CREATE TABLE legs (
     fees REAL DEFAULT 0.0,
     occ_symbol TEXT,
     tx_hash TEXT,
+    deleted INTEGER DEFAULT 0,
     FOREIGN KEY (chain_id) REFERENCES chains (id) ON DELETE CASCADE
 );
 
