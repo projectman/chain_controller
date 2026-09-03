@@ -138,3 +138,15 @@ def test_same_day_underlying_grouping_and_position_interaction(tmp_path):
     assert len(qqq_chain.legs) == 3
     assert qqq_chain.active is True
     assert qqq_chain.opened_date == "2026-08-31"
+
+    # 4. ORCL: Rolls on 2026-08-04 and 2026-08-17 unified into single active rolling chain
+    orcl_chain = storage.get_chain_by_name("ORCL 2026-08-04 Strategy")
+    assert orcl_chain is not None
+    assert orcl_chain.symbol == "ORCL"
+    assert len(orcl_chain.legs) == 4
+    assert orcl_chain.active is True
+    assert orcl_chain.opened_date == "2026-08-04"
+    assert orcl_chain.closed_date is None
+    # Verify no separate closing chain was created for ORCL
+    assert storage.get_chain_by_name("ORCL 2026-08-04 Closing") is None
+    assert storage.get_chain_by_name("ORCL 2026-08-17 Strategy") is None

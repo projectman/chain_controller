@@ -14,6 +14,7 @@ class ChainStorage:
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -330,6 +331,7 @@ class ChainStorage:
         """Deletes a chain and its associated legs (hard delete)."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            cursor.execute("DELETE FROM legs WHERE chain_id = ?", (chain_id,))
             cursor.execute("DELETE FROM chains WHERE id = ?", (chain_id,))
             conn.commit()
             return cursor.rowcount > 0

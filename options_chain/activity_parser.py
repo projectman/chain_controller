@@ -218,8 +218,8 @@ class ActivityParser:
         existing_chains: Optional[List[OptionsChain]] = None
     ) -> List[OptionsChain]:
         """
-        Groups legs by same-day underlying for opening trades, and matches closing trades
-        (BUY_TO_CLOSE <-> SELL_TO_OPEN and SELL_TO_CLOSE <-> BUY_TO_OPEN) directly to active chains.
+        Groups legs by same-day underlying for opening trades and rolls,
+        and matches closing trades to active chains.
         """
         # Deduplicate legs by tx_hash
         unique_legs_map: Dict[str, OptionLeg] = {}
@@ -227,95 +227,90 @@ class ActivityParser:
             if leg.tx_hash:
                 unique_legs_map[leg.tx_hash] = leg
 
-        # Sort chronologically by trade_date ascending; prioritize OPEN trades before CLOSE trades on same date
         sorted_legs = sorted(
             unique_legs_map.values(),
-            key=lambda l: (l.trade_date or "", 0 if "OPEN" in (l.action or "") else 1)
+            key=lambda l: (l.trade_date or "", 0 if "CLOSE" in (l.action or "") else 1)
         )
+
+        from collections import defaultdict
+        date_symbol_legs = defaultdict(lambda: defaultdict(list))
+        for l in sorted_legs:
+            sym = parse_occ_symbol(l.occ_symbol)["symbol"]
+            date_symbol_legs[l.trade_date or ""][sym].append(l)
 
         chains_pool: List[OptionsChain] = []
         if existing_chains:
             chains_pool.extend(existing_chains)
 
-        for leg in sorted_legs:
-            # Check if leg is already present in chains_pool
-            already_present = any(
-                any(existing_l.tx_hash == leg.tx_hash for existing_l in c.legs if existing_l.tx_hash)
-                for c in chains_pool
-            )
-            if already_present:
-                continue
-
-            sym = parse_occ_symbol(leg.occ_symbol)["symbol"]
-            is_open = "OPEN" in (leg.action or "")
-
-            if is_open:
-                # Same-day underlying grouping: match active chain for (sym, trade_date)
-                matched_chain = None
-                for c in chains_pool:
-                    if c.symbol == sym and c.opened_date == leg.trade_date and c.active:
-                        matched_chain = c
-                        break
-                if not matched_chain:
-                    name = f"{sym} {leg.trade_date} Strategy"
-                    matched_chain = OptionsChain(
-                        symbol=sym,
-                        name=name,
-                        active=True,
-                        opened_date=leg.trade_date
+        for dt in sorted(date_symbol_legs.keys()):
+            for sym, d_legs in date_symbol_legs[dt].items():
+                # Filter out legs already present in chains_pool
+                new_d_legs = []
+                for l in d_legs:
+                    already_present = any(
+                        any(el.tx_hash == l.tx_hash for el in c.legs if el.tx_hash)
+                        for c in chains_pool
                     )
-                    chains_pool.append(matched_chain)
-                matched_chain.add_leg(leg)
+                    if not already_present:
+                        new_d_legs.append(l)
 
-            else:
-                # Closing transaction: search active chains for open opposite position
-                matched_chain = None
-                for c in reversed(chains_pool):
-                    if c.symbol == sym and c.active:
-                        rem_long, rem_short = cls.get_open_contract_balance(c, leg.occ_symbol)
-                        if leg.action == TradeAction.BUY_TO_CLOSE.value and rem_short > 0:
-                            matched_chain = c
-                            break
-                        elif leg.action == TradeAction.SELL_TO_CLOSE.value and rem_long > 0:
-                            matched_chain = c
-                            break
+                if not new_d_legs:
+                    continue
 
-                if not matched_chain:
-                    # Fallback: check any active chain for this symbol that has this occ_symbol
+                open_legs = [l for l in new_d_legs if "OPEN" in (l.action or "")]
+                close_legs = [l for l in new_d_legs if "CLOSE" in (l.action or "")]
+
+                # Check if closing legs match an existing active chain in chains_pool
+                target_chain = None
+                for cl in close_legs:
                     for c in reversed(chains_pool):
-                        if c.symbol == sym and c.active and any(l.occ_symbol == leg.occ_symbol for l in c.legs):
-                            matched_chain = c
-                            break
+                        if c.symbol == sym and c.active:
+                            rem_l, rem_s = cls.get_open_contract_balance(c, cl.occ_symbol)
+                            if cl.action == TradeAction.BUY_TO_CLOSE.value and rem_s > 0:
+                                target_chain = c
+                                break
+                            elif cl.action == TradeAction.SELL_TO_CLOSE.value and rem_l > 0:
+                                target_chain = c
+                                break
+                    if target_chain:
+                        break
 
-                if not matched_chain:
-                    # Standalone closing trade (opening trade not in current file pool)
-                    name = f"{sym} {leg.trade_date} Closing"
-                    for c in chains_pool:
-                        if c.name == name:
-                            matched_chain = c
-                            break
-                    if not matched_chain:
-                        matched_chain = OptionsChain(
-                            symbol=sym,
-                            name=name,
-                            active=False,
-                            opened_date=leg.trade_date,
-                            closed_date=leg.trade_date
-                        )
-                        chains_pool.append(matched_chain)
+                if target_chain:
+                    # Add closing legs to matched active chain
+                    for l in close_legs:
+                        target_chain.add_leg(l)
+                    # If there are also opening legs on this same roll date, add them to this continuing chain!
+                    for l in open_legs:
+                        target_chain.add_leg(l)
+                else:
+                    if open_legs:
+                        # Same-day opening and closing trades exist -> unified into same strategy chain!
+                        name = f"{sym} {dt} Strategy"
+                        existing_same_name = next((c for c in chains_pool if c.name == name and c.active), None)
+                        if existing_same_name:
+                            target_chain = existing_same_name
+                        else:
+                            target_chain = OptionsChain(symbol=sym, name=name, active=True, opened_date=dt)
+                            chains_pool.append(target_chain)
 
-                matched_chain.add_leg(leg)
+                        for l in close_legs:
+                            target_chain.add_leg(l)
+                        for l in open_legs:
+                            target_chain.add_leg(l)
+                    else:
+                        # Only closing legs without opening trades -> standalone closing chain
+                        name = f"{sym} {dt} Closing"
+                        existing_close_name = next((c for c in chains_pool if c.name == name), None)
+                        if existing_close_name:
+                            target_chain = existing_close_name
+                        else:
+                            target_chain = OptionsChain(symbol=sym, name=name, active=False, opened_date=dt, closed_date=dt)
+                            chains_pool.append(target_chain)
 
-            # Update matched chain active status & closed_date
-            if cls.is_chain_active(matched_chain):
-                matched_chain.active = True
-                matched_chain.closed_date = None
-            else:
-                matched_chain.active = False
-                close_dates = [l.trade_date for l in matched_chain.legs if l.trade_date and "CLOSE" in (l.action or "")]
-                matched_chain.closed_date = max(close_dates) if close_dates else leg.trade_date
+                        for l in close_legs:
+                            target_chain.add_leg(l)
 
-        # Final pass: sort legs within each chain by date
+        # Final pass: sort legs within each chain by date and re-evaluate active/closed status
         for c in chains_pool:
             c.legs.sort(key=lambda l: (l.trade_date or "", 0 if "OPEN" in (l.action or "") else 1))
             if c.legs:
