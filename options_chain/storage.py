@@ -105,6 +105,17 @@ class ChainStorage:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             active_val = 1 if chain.active else 0
+
+            # If chain.id is None, check if any of its legs are already associated with an existing chain
+            if chain.id is None:
+                for leg in chain.legs:
+                    if leg.tx_hash:
+                        cursor.execute("SELECT chain_id FROM legs WHERE tx_hash = ?", (leg.tx_hash,))
+                        r = cursor.fetchone()
+                        if r:
+                            chain.id = r['chain_id']
+                            break
+
             if chain.id is not None:
                 # Update existing chain header
                 cursor.execute("""
@@ -137,7 +148,7 @@ class ChainStorage:
             # Insert legs
             for leg in chain.legs:
                 cursor.execute("""
-                    INSERT INTO legs (chain_id, strike, option_type, side, quantity, entry_price, current_price, expiration_date, multiplier, action, trade_date, commission, fees, occ_symbol, tx_hash)
+                    INSERT OR REPLACE INTO legs (chain_id, strike, option_type, side, quantity, entry_price, current_price, expiration_date, multiplier, action, trade_date, commission, fees, occ_symbol, tx_hash)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     chain_id, leg.strike, leg.option_type.value, leg.side.value,
@@ -206,6 +217,40 @@ class ChainStorage:
             if row:
                 return self.get_chain(row['id'])
             return None
+
+    def get_active_chains_by_symbol(self, symbol: str) -> List[OptionsChain]:
+        """Retrieves all currently active chains for a given underlying symbol."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM chains WHERE UPPER(symbol) = UPPER(?) AND active = 1 ORDER BY opened_date ASC", (symbol,))
+            chain_ids = [row['id'] for row in cursor.fetchall()]
+            return [self.get_chain(cid) for cid in chain_ids if cid]
+
+    def find_active_chain_for_closing_leg(self, symbol: str, occ_symbol: str, action: str) -> Optional[OptionsChain]:
+        """
+        Finds an active chain that has an opposite open position for the given occ_symbol.
+        - If action is BUY_TO_CLOSE: looks for chain with net short contracts in occ_symbol.
+        - If action is SELL_TO_CLOSE: looks for chain with net long contracts in occ_symbol.
+        """
+        active_chains = self.get_active_chains_by_symbol(symbol)
+        for chain in active_chains:
+            net_for_occ = 0
+            has_occ = False
+            for leg in chain.legs:
+                if leg.occ_symbol == occ_symbol:
+                    has_occ = True
+                    if leg.action in ("BUY_TO_OPEN", "BUY_TO_CLOSE") or (not leg.action and leg.side.value == "BUY"):
+                        net_for_occ += leg.quantity
+                    else:
+                        net_for_occ -= leg.quantity
+
+            if action == "BUY_TO_CLOSE" and net_for_occ < 0:
+                return chain
+            elif action == "SELL_TO_CLOSE" and net_for_occ > 0:
+                return chain
+            elif has_occ:
+                return chain
+        return None
 
     def list_chains(self) -> List[Dict[str, Any]]:
         """Lists summary metadata of all saved options chains."""

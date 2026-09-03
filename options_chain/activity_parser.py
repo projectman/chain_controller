@@ -28,7 +28,7 @@ def parse_occ_symbol(symbol_str: str) -> Dict[str, Any]:
     - 'IBM260724P00200000' -> symbol='IBM', expiration='2026-07-24', option_type=PUT, strike=200.0
     """
     clean_sym = symbol_str.strip()
-    match = re.match(r"^([A-Za-z]+)\s*(\d{6})([CPcp])(\d+)$", clean_sym)
+    match = re.match(r"^([A-Za-z]+)\s*(\d{6})([CPcp])(\d+(?:\.\d+)?)$", clean_sym)
     if not match:
         raise ValueError(f"Invalid OCC option symbol format: {symbol_str}")
 
@@ -42,7 +42,7 @@ def parse_occ_symbol(symbol_str: str) -> Dict[str, Any]:
     option_type = OptionType.CALL if opt_char.upper() == 'C' else OptionType.PUT
 
     # Strike price
-    if len(strike_digits) == 8:
+    if len(strike_digits) == 8 and '.' not in strike_digits:
         strike = float(strike_digits) / 1000.0
     else:
         strike = float(strike_digits)
@@ -57,15 +57,15 @@ def parse_occ_symbol(symbol_str: str) -> Dict[str, Any]:
 
 
 class ActivityParser:
-    """Parser for broker Activity report CSV files (e.g. Fidelity Activity*.csv)."""
+    """Parser for broker Activity report CSV files with same-day grouping & position closing interaction."""
 
     @classmethod
-    def parse_csv_file(cls, filepath: str) -> List[OptionsChain]:
-        """Parses a single Activity CSV file and returns constructed OptionsChain objects."""
+    def extract_transactions_from_csv(cls, filepath: str) -> List[OptionLeg]:
+        """Parses a single Activity CSV file and extracts raw OptionLeg transaction records."""
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Activity CSV file not found: {filepath}")
 
-        rows = []
+        legs = []
         with open(filepath, mode='r', encoding='utf-8-sig', errors='replace') as f:
             reader = csv.reader(f)
             header_found = False
@@ -75,7 +75,6 @@ class ActivityParser:
                 if not row or len(row) < 3:
                     continue
 
-                # Check for table header row
                 first_cell = row[0].strip()
                 if not header_found:
                     if first_cell.lower() == "date" and len(row) >= 5:
@@ -86,232 +85,309 @@ class ActivityParser:
                     else:
                         continue
 
-                # Skip non-data rows
+                # Skip non-data rows and footers
                 if not first_cell or first_cell.lower() in ("totals", "disclosure", "the data and information"):
                     continue
 
-                # Skip footer lines containing "totals" anywhere in the first few cells
                 row_str = " ".join([c.strip().lower() for c in row[:3]])
                 if "totals" in row_str or "disclosure" in row_str:
                     continue
 
-                rows.append((row, col_indices))
+                date_idx = col_indices.get("date", 0)
+                desc_idx = col_indices.get("activity description", 1)
+                sym_idx = col_indices.get("symbol", 2)
+                qty_idx = col_indices.get("quantity", 3)
+                price_idx = col_indices.get("price", 4)
 
-        # Group option transactions by (underlying_symbol, expiration_date)
-        groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+                if len(row) <= max(date_idx, desc_idx, sym_idx, qty_idx, price_idx):
+                    continue
 
-        for row, idx_map in rows:
-            date_idx = idx_map.get("date", 0)
-            desc_idx = idx_map.get("activity description", 1)
-            sym_idx = idx_map.get("symbol", 2)
-            qty_idx = idx_map.get("quantity", 3)
-            price_idx = idx_map.get("price", 4)
+                date_val = row[date_idx].strip()
+                desc_val = row[desc_idx].strip().upper()
+                sym_val = row[sym_idx].strip()
+                qty_val = row[qty_idx].strip()
+                price_val = row[price_idx].strip()
 
-            if len(row) <= max(date_idx, desc_idx, sym_idx, qty_idx, price_idx):
-                continue
+                comm_val = 0.0
+                if "commission" in col_indices and col_indices["commission"] < len(row):
+                    c_str = row[col_indices["commission"]].strip().replace("$", "").replace(",", "")
+                    if c_str and c_str != "--":
+                        try:
+                            comm_val = float(c_str)
+                        except ValueError:
+                            pass
 
-            date_val = row[date_idx].strip()
-            desc_val = row[desc_idx].strip().upper()
-            sym_val = row[sym_idx].strip()
-            qty_val = row[qty_idx].strip()
-            price_val = row[price_idx].strip()
+                fees_val = 0.0
+                if "fees" in col_indices and col_indices["fees"] < len(row):
+                    f_str = row[col_indices["fees"]].strip().replace("$", "").replace(",", "")
+                    if f_str and f_str != "--":
+                        try:
+                            fees_val = float(f_str)
+                        except ValueError:
+                            pass
 
-            comm_val = 0.0
-            if "commission" in idx_map and idx_map["commission"] < len(row):
-                c_str = row[idx_map["commission"]].strip().replace("$", "").replace(",", "")
-                if c_str and c_str != "--":
-                    try:
-                        comm_val = float(c_str)
-                    except ValueError:
-                        pass
+                # Classify transaction action
+                action = None
+                if "SOLD OPENING" in desc_val:
+                    action = TradeAction.SELL_TO_OPEN
+                    side = OptionSide.SELL
+                elif "BOUGHT OPENING" in desc_val:
+                    action = TradeAction.BUY_TO_OPEN
+                    side = OptionSide.BUY
+                elif "BOUGHT CLOSING" in desc_val:
+                    action = TradeAction.BUY_TO_CLOSE
+                    side = OptionSide.BUY
+                elif "SOLD CLOSING" in desc_val:
+                    action = TradeAction.SELL_TO_CLOSE
+                    side = OptionSide.SELL
 
-            fees_val = 0.0
-            if "fees" in idx_map and idx_map["fees"] < len(row):
-                f_str = row[idx_map["fees"]].strip().replace("$", "").replace(",", "")
-                if f_str and f_str != "--":
-                    try:
-                        fees_val = float(f_str)
-                    except ValueError:
-                        pass
+                if not action:
+                    continue  # Skip non-option trades
 
-            # Determine transaction action
-            action = None
-            if "SOLD OPENING" in desc_val:
-                action = TradeAction.SELL_TO_OPEN
-                side = OptionSide.SELL
-            elif "BOUGHT OPENING" in desc_val:
-                action = TradeAction.BUY_TO_OPEN
-                side = OptionSide.BUY
-            elif "BOUGHT CLOSING" in desc_val:
-                action = TradeAction.BUY_TO_CLOSE
-                side = OptionSide.BUY
-            elif "SOLD CLOSING" in desc_val:
-                action = TradeAction.SELL_TO_CLOSE
-                side = OptionSide.SELL
+                try:
+                    occ_info = parse_occ_symbol(sym_val)
+                except ValueError:
+                    continue
 
-            if not action:
-                continue  # Skip non-option transactions
+                trade_date = parse_date_to_iso(date_val)
+                try:
+                    qty = abs(int(float(qty_val)))
+                    price = abs(float(price_val.replace("$", "").replace(",", "")))
+                except ValueError:
+                    continue
 
-            # Parse OCC Symbol
-            try:
-                occ_info = parse_occ_symbol(sym_val)
-            except ValueError:
-                continue
-
-            trade_date = parse_date_to_iso(date_val)
-            try:
-                qty = abs(int(float(qty_val)))
-                price = abs(float(price_val.replace("$", "").replace(",", "")))
-            except ValueError:
-                continue
-
-            key = (occ_info["symbol"], occ_info["expiration_date"])
-            if key not in groups:
-                groups[key] = []
-
-            groups[key].append({
-                "trade_date": trade_date,
-                "action": action,
-                "side": side,
-                "quantity": qty,
-                "entry_price": price,
-                "commission": comm_val,
-                "fees": fees_val,
-                "occ_info": occ_info
-            })
-
-        # Construct OptionsChain objects
-        chains: List[OptionsChain] = []
-        for (symbol, expiration), tx_list in groups.items():
-            tx_list.sort(key=lambda x: x["trade_date"])
-
-            opened_date = tx_list[0]["trade_date"]
-            latest_trade_date = tx_list[-1]["trade_date"]
-
-            net_contracts = 0
-            legs = []
-
-            for tx in tx_list:
-                act = tx["action"]
-                q = tx["quantity"]
-                if act in (TradeAction.BUY_TO_OPEN, TradeAction.BUY_TO_CLOSE):
-                    net_contracts += q
-                else:  # SELL_TO_OPEN, SELL_TO_CLOSE
-                    net_contracts -= q
-
-                occ = tx["occ_info"]
                 leg = OptionLeg(
-                    strike=occ["strike"],
-                    option_type=occ["option_type"],
-                    side=tx["side"],
-                    quantity=tx["quantity"],
-                    entry_price=tx["entry_price"],
-                    current_price=tx["entry_price"],
-                    expiration_date=occ["expiration_date"],
-                    action=act.value,
-                    trade_date=tx["trade_date"],
-                    commission=tx["commission"],
-                    fees=tx["fees"],
-                    occ_symbol=occ["occ_symbol"]
+                    strike=occ_info["strike"],
+                    option_type=occ_info["option_type"],
+                    side=side,
+                    quantity=qty,
+                    entry_price=price,
+                    current_price=price,
+                    expiration_date=occ_info["expiration_date"],
+                    action=action.value,
+                    trade_date=trade_date,
+                    commission=comm_val,
+                    fees=fees_val,
+                    occ_symbol=occ_info["occ_symbol"]
                 )
                 legs.append(leg)
 
-            is_active = (net_contracts != 0)
-            closed_date = None if is_active else latest_trade_date
+        return legs
 
-            strategy_name = f"{symbol} {expiration} Chain"
-            chain = OptionsChain(
-                symbol=symbol,
-                name=strategy_name,
-                legs=legs,
-                active=is_active,
-                opened_date=opened_date,
-                closed_date=closed_date
-            )
-            chains.append(chain)
+    @staticmethod
+    def get_open_contract_balance(chain: OptionsChain, occ_symbol: str) -> Tuple[int, int]:
+        """Calculates (open_long_contracts, open_short_contracts) remaining for a specific contract."""
+        open_long = sum(
+            l.quantity for l in chain.legs 
+            if l.occ_symbol == occ_symbol and l.action in (TradeAction.BUY_TO_OPEN.value, None)
+        )
+        closed_long = sum(
+            l.quantity for l in chain.legs 
+            if l.occ_symbol == occ_symbol and l.action == TradeAction.SELL_TO_CLOSE.value
+        )
 
-        return chains
+        open_short = sum(
+            l.quantity for l in chain.legs 
+            if l.occ_symbol == occ_symbol and l.action in (TradeAction.SELL_TO_OPEN.value, None)
+        )
+        closed_short = sum(
+            l.quantity for l in chain.legs 
+            if l.occ_symbol == occ_symbol and l.action == TradeAction.BUY_TO_CLOSE.value
+        )
+
+        rem_long = max(0, open_long - closed_long)
+        rem_short = max(0, open_short - closed_short)
+        return rem_long, rem_short
 
     @classmethod
-    def import_sources_folder(cls, sources_dir: str = "sources", storage: Optional[ChainStorage] = None) -> Dict[str, Any]:
+    def is_chain_active(cls, chain: OptionsChain) -> bool:
+        """Determines if a chain has any remaining open contracts."""
+        occ_symbols = {l.occ_symbol for l in chain.legs if l.occ_symbol}
+        if not occ_symbols:
+            return True
+        for occ in occ_symbols:
+            rem_long, rem_short = cls.get_open_contract_balance(chain, occ)
+            if rem_long > 0 or rem_short > 0:
+                return True
+        return False
+
+    @classmethod
+    def build_chains_from_legs(
+        cls, 
+        legs: List[OptionLeg], 
+        existing_chains: Optional[List[OptionsChain]] = None
+    ) -> List[OptionsChain]:
+        """
+        Groups legs by same-day underlying for opening trades, and matches closing trades
+        (BUY_TO_CLOSE <-> SELL_TO_OPEN and SELL_TO_CLOSE <-> BUY_TO_OPEN) directly to active chains.
+        """
+        # Deduplicate legs by tx_hash
+        unique_legs_map: Dict[str, OptionLeg] = {}
+        for leg in legs:
+            if leg.tx_hash:
+                unique_legs_map[leg.tx_hash] = leg
+
+        # Sort chronologically by trade_date ascending; prioritize OPEN trades before CLOSE trades on same date
+        sorted_legs = sorted(
+            unique_legs_map.values(),
+            key=lambda l: (l.trade_date or "", 0 if "OPEN" in (l.action or "") else 1)
+        )
+
+        chains_pool: List[OptionsChain] = []
+        if existing_chains:
+            chains_pool.extend(existing_chains)
+
+        for leg in sorted_legs:
+            # Check if leg is already present in chains_pool
+            already_present = any(
+                any(existing_l.tx_hash == leg.tx_hash for existing_l in c.legs if existing_l.tx_hash)
+                for c in chains_pool
+            )
+            if already_present:
+                continue
+
+            sym = parse_occ_symbol(leg.occ_symbol)["symbol"]
+            is_open = "OPEN" in (leg.action or "")
+
+            if is_open:
+                # Same-day underlying grouping: match active chain for (sym, trade_date)
+                matched_chain = None
+                for c in chains_pool:
+                    if c.symbol == sym and c.opened_date == leg.trade_date and c.active:
+                        matched_chain = c
+                        break
+                if not matched_chain:
+                    name = f"{sym} {leg.trade_date} Strategy"
+                    matched_chain = OptionsChain(
+                        symbol=sym,
+                        name=name,
+                        active=True,
+                        opened_date=leg.trade_date
+                    )
+                    chains_pool.append(matched_chain)
+                matched_chain.add_leg(leg)
+
+            else:
+                # Closing transaction: search active chains for open opposite position
+                matched_chain = None
+                for c in reversed(chains_pool):
+                    if c.symbol == sym and c.active:
+                        rem_long, rem_short = cls.get_open_contract_balance(c, leg.occ_symbol)
+                        if leg.action == TradeAction.BUY_TO_CLOSE.value and rem_short > 0:
+                            matched_chain = c
+                            break
+                        elif leg.action == TradeAction.SELL_TO_CLOSE.value and rem_long > 0:
+                            matched_chain = c
+                            break
+
+                if not matched_chain:
+                    # Fallback: check any active chain for this symbol that has this occ_symbol
+                    for c in reversed(chains_pool):
+                        if c.symbol == sym and c.active and any(l.occ_symbol == leg.occ_symbol for l in c.legs):
+                            matched_chain = c
+                            break
+
+                if not matched_chain:
+                    # Standalone closing trade (opening trade not in current file pool)
+                    name = f"{sym} {leg.trade_date} Closing"
+                    for c in chains_pool:
+                        if c.name == name:
+                            matched_chain = c
+                            break
+                    if not matched_chain:
+                        matched_chain = OptionsChain(
+                            symbol=sym,
+                            name=name,
+                            active=False,
+                            opened_date=leg.trade_date,
+                            closed_date=leg.trade_date
+                        )
+                        chains_pool.append(matched_chain)
+
+                matched_chain.add_leg(leg)
+
+            # Update matched chain active status & closed_date
+            if cls.is_chain_active(matched_chain):
+                matched_chain.active = True
+                matched_chain.closed_date = None
+            else:
+                matched_chain.active = False
+                close_dates = [l.trade_date for l in matched_chain.legs if l.trade_date and "CLOSE" in (l.action or "")]
+                matched_chain.closed_date = max(close_dates) if close_dates else leg.trade_date
+
+        # Final pass: sort legs within each chain by date
+        for c in chains_pool:
+            c.legs.sort(key=lambda l: (l.trade_date or "", 0 if "OPEN" in (l.action or "") else 1))
+            if c.legs:
+                open_dates = [l.trade_date for l in c.legs if l.trade_date and "OPEN" in (l.action or "")]
+                c.opened_date = min(open_dates) if open_dates else c.legs[0].trade_date
+                if not cls.is_chain_active(c):
+                    c.active = False
+                    close_dates = [l.trade_date for l in c.legs if l.trade_date and "CLOSE" in (l.action or "")]
+                    c.closed_date = max(close_dates) if close_dates else c.legs[-1].trade_date
+                else:
+                    c.active = True
+                    c.closed_date = None
+
+        return chains_pool
+
+    @classmethod
+    def parse_csv_file(cls, filepath: str) -> List[OptionsChain]:
+        """Parses a single Activity CSV file and returns constructed OptionsChain objects."""
+        legs = cls.extract_transactions_from_csv(filepath)
+        return cls.build_chains_from_legs(legs)
+
+    @classmethod
+    def import_sources_folder(
+        cls, 
+        sources_dir: str = "sources", 
+        storage: Optional[ChainStorage] = None
+    ) -> Dict[str, Any]:
         """
         Scans sources directory for Activity*.csv files, deduplicates transactions via SHA-256 tx_hash,
+        groups same-day opening trades by underlying, matches closing trades to active chains,
         and updates SQLite storage.
-        Returns dictionary with import statistics.
         """
         if not os.path.exists(sources_dir):
             return {"processed_files": 0, "new_legs": 0, "skipped_duplicates": 0, "chains": []}
 
         pattern = os.path.join(sources_dir, "Activity*.csv")
-        files = glob.glob(pattern)
+        files = sorted(glob.glob(pattern))
+        if not files:
+            return {"processed_files": 0, "new_legs": 0, "skipped_duplicates": 0, "chains": []}
 
-        all_parsed_chains: List[OptionsChain] = []
-        for f in sorted(files):
-            chains = cls.parse_csv_file(f)
-            all_parsed_chains.extend(chains)
+        all_legs: List[OptionLeg] = []
+        for f in files:
+            all_legs.extend(cls.extract_transactions_from_csv(f))
 
-        if not storage:
-            return {"processed_files": len(files), "new_legs": 0, "skipped_duplicates": 0, "chains": all_parsed_chains}
+        existing_hashes: Set[str] = set()
+        existing_chains: List[OptionsChain] = []
+        if storage:
+            existing_hashes = storage.get_existing_tx_hashes()
+            # Load active chains from database
+            for meta in storage.list_chains():
+                if meta.get("active", 1):
+                    loaded = storage.get_chain(meta["id"])
+                    if loaded:
+                        existing_chains.append(loaded)
 
-        existing_hashes: Set[str] = storage.get_existing_tx_hashes()
-        new_legs_count = 0
-        skipped_duplicates_count = 0
-        saved_chains: List[OptionsChain] = []
+        # Count new legs vs duplicates
+        new_legs_count = sum(1 for l in all_legs if l.tx_hash and l.tx_hash not in existing_hashes)
+        skipped_duplicates_count = sum(1 for l in all_legs if l.tx_hash and l.tx_hash in existing_hashes)
 
-        for parsed_chain in all_parsed_chains:
-            # Check if target chain already exists in DB
-            db_chain = storage.get_chain_by_name(parsed_chain.name)
-            existing_legs = db_chain.legs if db_chain else []
+        # Build and match chains
+        resolved_chains = cls.build_chains_from_legs(all_legs, existing_chains=existing_chains)
 
-            # Filter legs by tx_hash deduplication
-            merged_legs_map: Dict[str, OptionLeg] = {}
-            for leg in existing_legs:
-                if leg.tx_hash:
-                    merged_legs_map[leg.tx_hash] = leg
-
-            for leg in parsed_chain.legs:
-                if leg.tx_hash in existing_hashes or leg.tx_hash in merged_legs_map:
-                    skipped_duplicates_count += 1
-                else:
-                    new_legs_count += 1
-                    existing_hashes.add(leg.tx_hash)
-                    merged_legs_map[leg.tx_hash] = leg
-
-            # Re-evaluate chain active state and dates based on all merged unique legs
-            merged_legs = list(merged_legs_map.values())
-            if not merged_legs:
-                continue
-
-            merged_legs.sort(key=lambda x: x.trade_date or "")
-            opened_date = merged_legs[0].trade_date
-            latest_trade_date = merged_legs[-1].trade_date
-
-            net_contracts = 0
-            for leg in merged_legs:
-                q = leg.quantity
-                if leg.action in (TradeAction.BUY_TO_OPEN.value, TradeAction.BUY_TO_CLOSE.value):
-                    net_contracts += q
-                else:
-                    net_contracts -= q
-
-            is_active = (net_contracts != 0)
-            closed_date = None if is_active else latest_trade_date
-
-            target_chain = OptionsChain(
-                id=db_chain.id if db_chain else None,
-                symbol=parsed_chain.symbol,
-                name=parsed_chain.name,
-                legs=merged_legs,
-                active=is_active,
-                opened_date=opened_date,
-                closed_date=closed_date
-            )
-            storage.save_chain(target_chain)
-            saved_chains.append(target_chain)
+        if storage:
+            for chain in resolved_chains:
+                existing_db = storage.get_chain_by_name(chain.name)
+                if existing_db:
+                    chain.id = existing_db.id
+                storage.save_chain(chain)
 
         return {
             "processed_files": len(files),
             "new_legs": new_legs_count,
             "skipped_duplicates": skipped_duplicates_count,
-            "chains": saved_chains
+            "chains": resolved_chains
         }

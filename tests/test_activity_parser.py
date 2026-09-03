@@ -35,6 +35,7 @@ def test_parse_fidelity_activity_csv():
 
     ibm_chain = chains[0]
     assert ibm_chain.symbol == "IBM"
+    assert ibm_chain.name == "IBM 2026-07-14 Strategy"
     assert ibm_chain.opened_date == "2026-07-14"
     assert ibm_chain.closed_date == "2026-07-16"
     assert ibm_chain.active is False
@@ -73,7 +74,7 @@ def test_import_sources_to_sqlite(tmp_path):
     assert res["processed_files"] >= 1
     assert res["new_legs"] >= 2
 
-    saved = storage.get_chain_by_name("IBM 2026-07-24 Chain")
+    saved = storage.get_chain_by_name("IBM 2026-07-14 Strategy")
     assert saved is not None
     assert saved.symbol == "IBM"
     assert saved.active is False
@@ -98,5 +99,42 @@ def test_import_deduplication(tmp_path):
     assert res2["skipped_duplicates"] == initial_legs
 
     # Verify legs count in DB for IBM chain is still exactly 2
-    chain = storage.get_chain_by_name("IBM 2026-07-24 Chain")
+    chain = storage.get_chain_by_name("IBM 2026-07-14 Strategy")
+    assert chain is not None
     assert len(chain.legs) == 2
+
+
+def test_same_day_underlying_grouping_and_position_interaction(tmp_path):
+    """Verifies that opening trades on the same day for an underlying group together,
+    and closing trades across dates match and close the active chain."""
+    db_file = str(tmp_path / "test_interaction.db")
+    storage = ChainStorage(db_path=db_file)
+    sources_dir = os.path.join(os.path.dirname(__file__), "..", "sources")
+
+    res = ActivityParser.import_sources_folder(sources_dir=sources_dir, storage=storage)
+
+    # 1. WFC: 2 opening legs on 2026-08-27 with different expirations (2027-09-17 and 2026-10-16)
+    wfc_chain = storage.get_chain_by_name("WFC 2026-08-27 Strategy")
+    assert wfc_chain is not None
+    assert wfc_chain.symbol == "WFC"
+    assert len(wfc_chain.legs) == 2
+    assert wfc_chain.active is True
+    assert wfc_chain.opened_date == "2026-08-27"
+    assert wfc_chain.closed_date is None
+
+    # 2. WDC: 2 opening legs on 2026-08-24, closed with 2 closing legs on 2026-08-31
+    wdc_chain = storage.get_chain_by_name("WDC 2026-08-24 Strategy")
+    assert wdc_chain is not None
+    assert wdc_chain.symbol == "WDC"
+    assert len(wdc_chain.legs) == 4
+    assert wdc_chain.active is False
+    assert wdc_chain.opened_date == "2026-08-24"
+    assert wdc_chain.closed_date == "2026-08-31"
+
+    # 3. QQQ: 3 opening legs on 2026-08-31 (butterfly spread)
+    qqq_chain = storage.get_chain_by_name("QQQ 2026-08-31 Strategy")
+    assert qqq_chain is not None
+    assert qqq_chain.symbol == "QQQ"
+    assert len(qqq_chain.legs) == 3
+    assert qqq_chain.active is True
+    assert qqq_chain.opened_date == "2026-08-31"
