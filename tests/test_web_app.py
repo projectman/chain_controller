@@ -105,3 +105,31 @@ def test_api_run_import(client):
     assert "processed_files" in data
     assert "new_legs" in data
     assert "skipped_duplicates" in data
+
+
+def test_delete_and_revert_endpoints(client):
+    # 1. Delete chain ID 1
+    del_res = client.post("/api/chains/1/delete")
+    assert del_res.status_code == 200
+    del_data = del_res.get_json()
+    assert del_data["success"] is True
+
+    # 2. Check it does not appear in active
+    res_active = client.get("/chains?status=active")
+    assert "AAPL 2026-08-31 Strategy" not in res_active.get_data(as_text=True)
+
+    # 3. Check it appears in deleted tab
+    res_deleted = client.get("/chains?status=deleted")
+    assert res_deleted.status_code == 200
+    assert "AAPL 2026-08-31 Strategy" in res_deleted.get_data(as_text=True)
+    assert "Revert" in res_deleted.get_data(as_text=True)
+
+    # 4. Revert chain ID 1
+    rev_res = client.post("/api/chains/1/revert")
+    assert rev_res.status_code == 200
+    rev_data = rev_res.get_json()
+    assert rev_data["success"] is True
+
+    # 5. Check it is restored back into active
+    res_restored = client.get("/chains?status=active")
+    assert "AAPL 2026-08-31 Strategy" in res_restored.get_data(as_text=True)

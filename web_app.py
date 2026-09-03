@@ -38,6 +38,7 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
             "active": bool(chain.active),
             "opened_date": chain.opened_date,
             "closed_date": chain.closed_date,
+            "deleted": bool(getattr(chain, "deleted", False)),
             "legs": formatted_legs,
             "net_outlay": summary["net_initial_cost"],
             "cost_type": summary["cost_type"],
@@ -107,32 +108,52 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
 
+    @app.route("/api/chains/<int:chain_id>/delete", methods=["POST"])
+    def api_delete_chain(chain_id: int):
+        try:
+            success = storage.soft_delete_chain(chain_id)
+            if success:
+                return jsonify({"success": True, "message": f"Position #{chain_id} moved to Deleted."})
+            return jsonify({"success": False, "error": "Chain not found"}), 404
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/chains/<int:chain_id>/revert", methods=["POST"])
+    def api_revert_chain(chain_id: int):
+        try:
+            success = storage.revert_chain(chain_id)
+            if success:
+                chain = storage.get_chain(chain_id)
+                status_label = "Active" if chain and chain.active else "Closed"
+                return jsonify({
+                    "success": True, 
+                    "message": f"Position #{chain_id} reverted successfully to {status_label}."
+                })
+            return jsonify({"success": False, "error": "Chain not found"}), 404
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
     @app.route("/chains")
     def chains_page():
         status_filter = request.args.get("status", "all").lower()
         search_query = request.args.get("q", "").strip().upper()
 
-        all_meta = storage.list_chains()
+        # Compute counts for all selector tabs
+        count_all = len(storage.list_chains(status="all"))
+        count_active = len(storage.list_chains(status="active"))
+        count_closed = len(storage.list_chains(status="closed"))
+        count_deleted = len(storage.list_chains(status="deleted"))
+
+        # Fetch chains based on selected status filter
+        matching_meta = storage.list_chains(status=status_filter if status_filter in ("active", "closed", "deleted") else "all")
         all_chains: List[OptionsChain] = []
-        for meta in all_meta:
+        for meta in matching_meta:
             loaded = storage.get_chain(meta["id"])
             if loaded:
                 all_chains.append(loaded)
 
-        # Compute counts
-        count_all = len(all_chains)
-        count_active = sum(1 for c in all_chains if c.active)
-        count_closed = sum(1 for c in all_chains if not c.active)
-
-        # Apply status filter
-        if status_filter == "active":
-            filtered = [c for c in all_chains if c.active]
-        elif status_filter == "closed":
-            filtered = [c for c in all_chains if not c.active]
-        else:
-            filtered = all_chains
-
-        # Apply search query
+        # Apply search query filter if provided
+        filtered = all_chains
         if search_query:
             filtered = [
                 c for c in filtered 
@@ -146,7 +167,12 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
             active_page="chains",
             current_status=status_filter,
             search=search_query,
-            counts={"all": count_all, "active": count_active, "closed": count_closed},
+            counts={
+                "all": count_all, 
+                "active": count_active, 
+                "closed": count_closed,
+                "deleted": count_deleted
+            },
             chains=formatted_chains
         )
 

@@ -43,6 +43,52 @@ def test_sqlite_persistence(tmp_path):
     assert storage.get_chain(chain_id) is None
 
 
+def test_soft_delete_and_revert(tmp_path):
+    db_file = str(tmp_path / "test_soft_del.db")
+    storage = ChainStorage(db_path=db_file)
+
+    chain = OptionsChain(
+        symbol="WDC",
+        name="WDC 2026-08-24 Strategy",
+        active=True,
+        opened_date="2026-08-24"
+    )
+    chain.add_leg(OptionLeg(
+        strike=200.0,
+        option_type=OptionType.PUT,
+        side=OptionSide.BUY,
+        quantity=1,
+        entry_price=0.50,
+        action="BUY_TO_OPEN",
+        trade_date="2026-08-24"
+    ))
+    chain_id = storage.save_chain(chain)
+
+    # 1. Soft delete
+    assert storage.soft_delete_chain(chain_id) is True
+
+    # Check that it disappears from default list_chains (status="all" or non-deleted)
+    non_deleted = storage.list_chains(status="all")
+    assert len(non_deleted) == 0
+
+    # Check that it appears in status="deleted"
+    deleted_list = storage.list_chains(status="deleted")
+    assert len(deleted_list) == 1
+    assert deleted_list[0]['id'] == chain_id
+
+    # 2. Revert
+    assert storage.revert_chain(chain_id) is True
+
+    # Reverted position is active again because open contract remains
+    restored = storage.get_chain(chain_id)
+    assert restored.deleted is False
+    assert restored.active is True
+
+    active_list = storage.list_chains(status="active")
+    assert len(active_list) == 1
+    assert active_list[0]['id'] == chain_id
+
+
 def test_csv_export_and_import(tmp_path):
     csv_file = str(tmp_path / "test_chain.csv")
 

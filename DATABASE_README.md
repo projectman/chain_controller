@@ -42,6 +42,7 @@ Stores header information, active status, opening/closing dates, and underlying 
 | `active` | `INTEGER` | `1` (`True`) for active open chains, `0` (`False`) for closed chains |
 | `opened_date` | `TEXT` | ISO date string (e.g. `2026-07-14`) when first opening trade occurred |
 | `closed_date` | `TEXT` | ISO date string (e.g. `2026-07-16`) when chain was fully closed (`NULL` for active) |
+| `deleted` | `INTEGER` | `1` for soft-deleted chains, `0` for active/closed (default `0`) |
 | `created_at` | `TIMESTAMP` | Record creation timestamp (defaults to `CURRENT_TIMESTAMP`) |
 
 #### SQL DDL Statement:
@@ -58,6 +59,7 @@ CREATE TABLE chains (
     active INTEGER DEFAULT 1,
     opened_date TEXT,
     closed_date TEXT,
+    deleted INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```

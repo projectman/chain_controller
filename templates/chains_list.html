@@ -12,7 +12,7 @@
         <span>📋</span> Saved Strategy Positions & Chains
       </h1>
       <p class="text-sm text-slate-400 mt-1">
-        Explore options chains saved in <code class="bg-slate-900 px-1.5 py-0.5 rounded text-indigo-300">options_chains.db</code>. Filter by Active or Closed status.
+        Explore options chains saved in <code class="bg-slate-900 px-1.5 py-0.5 rounded text-indigo-300">options_chains.db</code>. Filter by Active, Closed, or Deleted status.
       </p>
     </div>
     <div class="flex items-center gap-2">
@@ -22,10 +22,13 @@
     </div>
   </div>
 
+  <!-- Action Alert Banner -->
+  <div id="actionBanner" class="hidden p-4 rounded-xl border transition duration-300"></div>
+
   <!-- Filter & Controls Toolbar -->
   <div class="bg-slate-800/70 border border-slate-700/70 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
     
-    <!-- Active / Closed / All Selector -->
+    <!-- 4-State Selector: All / Active / Closed / Deleted -->
     <div class="inline-flex p-1 bg-slate-900/80 rounded-lg border border-slate-700/60 text-xs font-semibold">
       <a href="/chains?status=all{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'all' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
         All ({{ counts.all }})
@@ -35,6 +38,9 @@
       </a>
       <a href="/chains?status=closed{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'closed' %}bg-slate-700 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
         Closed ({{ counts.closed }})
+      </a>
+      <a href="/chains?status=deleted{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'deleted' %}bg-rose-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+        Deleted ({{ counts.deleted }})
       </a>
     </div>
 
@@ -76,23 +82,27 @@
             <th class="px-4 py-3.5 text-center">Legs</th>
             <th class="px-4 py-3.5 text-right">Net Outlay</th>
             <th class="px-4 py-3.5 text-right">Max Profit / Realized</th>
-            <th class="px-4 py-3.5 text-center">Details</th>
+            <th class="px-4 py-3.5 text-center">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-700/50">
           {% if not chains %}
           <tr>
             <td colspan="10" class="px-6 py-12 text-center text-slate-400">
-              No strategy positions found matching the filter.
+              No strategy positions found in <strong class="text-white uppercase">{{ current_status }}</strong>.
             </td>
           </tr>
           {% endif %}
 
           {% for c in chains %}
-          <tr class="hover:bg-slate-700/30 transition cursor-pointer" onclick="toggleDetails({{ c.id }})">
+          <tr id="row-{{ c.id }}" class="hover:bg-slate-700/30 transition cursor-pointer" onclick="toggleDetails({{ c.id }})">
             <td class="px-4 py-3.5 font-mono text-xs text-slate-400">#{{ c.id }}</td>
             <td class="px-4 py-3.5">
-              {% if c.active %}
+              {% if c.deleted %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                DELETED
+              </span>
+              {% elif c.active %}
               <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                 ACTIVE
               </span>
@@ -106,7 +116,7 @@
             <td class="px-4 py-3.5 font-medium text-slate-200">{{ c.name }}</td>
             <td class="px-4 py-3.5 font-mono text-xs text-slate-400">{{ c.opened_date or '-' }}</td>
             <td class="px-4 py-3.5 font-mono text-xs text-slate-400">
-              {% if c.active %}<span class="text-emerald-400 font-medium">Open</span>{% else %}{{ c.closed_date or '-' }}{% endif %}
+              {% if c.active and not c.deleted %}<span class="text-emerald-400 font-medium">Open</span>{% else %}{{ c.closed_date or '-' }}{% endif %}
             </td>
             <td class="px-4 py-3.5 text-center">
               <span class="px-2 py-0.5 rounded bg-slate-700 text-xs font-bold text-slate-300">{{ c.legs|length }}</span>
@@ -123,12 +133,27 @@
                 <span class="text-slate-300 font-semibold">{{ c.max_profit }}</span>
               {% endif %}
             </td>
-            <td class="px-4 py-3.5 text-center">
-              <button class="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition" title="Toggle Legs">
-                <svg id="chevron-{{ c.id }}" class="w-4 h-4 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                </svg>
-              </button>
+            <td class="px-4 py-3.5 text-center" onclick="event.stopPropagation()">
+              <div class="flex items-center justify-center gap-2">
+                {% if c.deleted %}
+                <!-- Revert Button -->
+                <button onclick="revertChain({{ c.id }}, event)" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/40 transition shadow-sm" title="Revert Position">
+                  <span>↩️</span> Revert
+                </button>
+                {% else %}
+                <!-- Delete Button -->
+                <button onclick="deleteChain({{ c.id }}, event)" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md bg-rose-500/10 hover:bg-rose-500/30 text-rose-400 hover:text-rose-200 border border-rose-500/20 transition" title="Delete Position">
+                  <span>🗑️</span> Delete
+                </button>
+                {% endif %}
+
+                <!-- Expand Chevron -->
+                <button onclick="toggleDetails({{ c.id }})" class="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition" title="Toggle Legs">
+                  <svg id="chevron-{{ c.id }}" class="w-4 h-4 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                  </svg>
+                </button>
+              </div>
             </td>
           </tr>
 
@@ -210,6 +235,55 @@ function toggleDetails(chainId) {
   } else {
     row.classList.add("hidden");
     chevron.classList.remove("rotate-180");
+  }
+}
+
+function showBanner(message, isSuccess = true) {
+  const banner = document.getElementById("actionBanner");
+  banner.className = isSuccess 
+    ? "p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 flex items-center justify-between"
+    : "p-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 flex items-center justify-between";
+  banner.innerHTML = `<span>${message}</span>`;
+  banner.classList.remove("hidden");
+  setTimeout(() => banner.classList.add("hidden"), 4000);
+}
+
+async function deleteChain(chainId, event) {
+  if (event) event.stopPropagation();
+  if (!confirm(`Are you sure you want to delete strategy position #${chainId}? It can be restored anytime from the Deleted tab.`)) {
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/chains/${chainId}/delete`, { method: "POST" });
+    const data = await res.json();
+    if (data.success) {
+      showBanner(data.message || `Position #${chainId} moved to Deleted.`);
+      // Reload page to refresh counters and table
+      setTimeout(() => location.reload(), 600);
+    } else {
+      showBanner(data.error || "Failed to delete position", false);
+    }
+  } catch (err) {
+    showBanner(`Network error: ${err.message}`, false);
+  }
+}
+
+async function revertChain(chainId, event) {
+  if (event) event.stopPropagation();
+
+  try {
+    const res = await fetch(`/api/chains/${chainId}/revert`, { method: "POST" });
+    const data = await res.json();
+    if (data.success) {
+      showBanner(data.message || `Position #${chainId} reverted successfully.`);
+      // Reload page to refresh counters and table
+      setTimeout(() => location.reload(), 600);
+    } else {
+      showBanner(data.error || "Failed to revert position", false);
+    }
+  } catch (err) {
+    showBanner(`Network error: ${err.message}`, false);
   }
 }
 </script>

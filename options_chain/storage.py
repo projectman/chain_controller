@@ -34,6 +34,7 @@ class ChainStorage:
                     active INTEGER DEFAULT 1,
                     opened_date TEXT,
                     closed_date TEXT,
+                    deleted INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
@@ -69,6 +70,8 @@ class ChainStorage:
                 cursor.execute("ALTER TABLE chains ADD COLUMN opened_date TEXT")
             if 'closed_date' not in chain_cols:
                 cursor.execute("ALTER TABLE chains ADD COLUMN closed_date TEXT")
+            if 'deleted' not in chain_cols:
+                cursor.execute("ALTER TABLE chains ADD COLUMN deleted INTEGER DEFAULT 0")
 
             cursor.execute("PRAGMA table_info(legs)")
             leg_cols = {row['name'] for row in cursor.fetchall()}
@@ -105,6 +108,7 @@ class ChainStorage:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             active_val = 1 if chain.active else 0
+            deleted_val = 1 if getattr(chain, 'deleted', False) else 0
 
             # If chain.id is None, check if any of its legs are already associated with an existing chain
             if chain.id is None:
@@ -122,12 +126,12 @@ class ChainStorage:
                     UPDATE chains 
                     SET symbol = ?, name = ?, underlying_entry_price = ?, underlying_current_price = ?,
                         shares = ?, share_entry_price = ?, share_current_price = ?,
-                        active = ?, opened_date = ?, closed_date = ?
+                        active = ?, opened_date = ?, closed_date = ?, deleted = ?
                     WHERE id = ?
                 """, (
                     chain.symbol, chain.name, chain.underlying_entry_price, chain.underlying_current_price,
                     chain.shares, chain.share_entry_price, chain.share_current_price,
-                    active_val, chain.opened_date, chain.closed_date, chain.id
+                    active_val, chain.opened_date, chain.closed_date, deleted_val, chain.id
                 ))
                 chain_id = chain.id
                 # Clear existing legs to re-insert updated legs
@@ -135,12 +139,12 @@ class ChainStorage:
             else:
                 # Insert new chain header
                 cursor.execute("""
-                    INSERT INTO chains (symbol, name, underlying_entry_price, underlying_current_price, shares, share_entry_price, share_current_price, active, opened_date, closed_date)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO chains (symbol, name, underlying_entry_price, underlying_current_price, shares, share_entry_price, share_current_price, active, opened_date, closed_date, deleted)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     chain.symbol, chain.name, chain.underlying_entry_price, chain.underlying_current_price,
                     chain.shares, chain.share_entry_price, chain.share_current_price,
-                    active_val, chain.opened_date, chain.closed_date
+                    active_val, chain.opened_date, chain.closed_date, deleted_val
                 ))
                 chain_id = cursor.lastrowid
                 chain.id = chain_id
@@ -170,6 +174,7 @@ class ChainStorage:
                 return None
 
             active_bool = bool(row['active']) if row['active'] is not None else True
+            deleted_bool = bool(row['deleted']) if 'deleted' in row.keys() and row['deleted'] is not None else False
 
             chain = OptionsChain(
                 id=row['id'],
@@ -182,7 +187,8 @@ class ChainStorage:
                 share_current_price=row['share_current_price'],
                 active=active_bool,
                 opened_date=row['opened_date'],
-                closed_date=row['closed_date']
+                closed_date=row['closed_date'],
+                deleted=deleted_bool
             )
 
             cursor.execute("SELECT * FROM legs WHERE chain_id = ?", (chain_id,))
@@ -219,10 +225,10 @@ class ChainStorage:
             return None
 
     def get_active_chains_by_symbol(self, symbol: str) -> List[OptionsChain]:
-        """Retrieves all currently active chains for a given underlying symbol."""
+        """Retrieves all currently active, non-deleted chains for a given underlying symbol."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id FROM chains WHERE UPPER(symbol) = UPPER(?) AND active = 1 ORDER BY opened_date ASC", (symbol,))
+            cursor.execute("SELECT id FROM chains WHERE UPPER(symbol) = UPPER(?) AND active = 1 AND (deleted = 0 OR deleted IS NULL) ORDER BY opened_date ASC", (symbol,))
             chain_ids = [row['id'] for row in cursor.fetchall()]
             return [self.get_chain(cid) for cid in chain_ids if cid]
 
@@ -252,21 +258,76 @@ class ChainStorage:
                 return chain
         return None
 
-    def list_chains(self) -> List[Dict[str, Any]]:
-        """Lists summary metadata of all saved options chains."""
+    def list_chains(self, include_deleted: bool = False, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Lists summary metadata of saved options chains.
+        Supports status filtering: 'all' (non-deleted), 'active', 'closed', 'deleted'.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            where_clauses = []
+
+            if status == "deleted":
+                where_clauses.append("c.deleted = 1")
+            elif status == "active":
+                where_clauses.append("(c.deleted = 0 OR c.deleted IS NULL) AND c.active = 1")
+            elif status == "closed":
+                where_clauses.append("(c.deleted = 0 OR c.deleted IS NULL) AND c.active = 0")
+            elif not include_deleted:
+                where_clauses.append("(c.deleted = 0 OR c.deleted IS NULL)")
+
+            where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+            query = f"""
+                SELECT c.id, c.symbol, c.name, c.active, c.opened_date, c.closed_date, c.deleted, c.created_at, COUNT(l.id) as leg_count
+                FROM chains c
+                LEFT JOIN legs l ON c.id = l.chain_id
+                {where_sql}
+                GROUP BY c.id
+                ORDER BY c.created_at DESC
+            """
+            cursor.execute(query)
+            return [dict(r) for r in cursor.fetchall()]
+
+    def soft_delete_chain(self, chain_id: int) -> bool:
+        """Marks a chain as deleted (soft delete) without dropping table records."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE chains SET deleted = 1 WHERE id = ?", (chain_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def revert_chain(self, chain_id: int) -> bool:
+        """
+        Reverts a deleted chain (sets deleted = 0).
+        Automatically recalculates whether the position is Active or Closed
+        based on whether any open contracts remain.
+        """
+        chain = self.get_chain(chain_id)
+        if not chain:
+            return False
+
+        # Re-evaluate remaining open contracts
+        from .activity_parser import ActivityParser
+        is_active = ActivityParser.is_chain_active(chain)
+
+        latest_closing_date = None
+        if not is_active:
+            close_dates = [l.trade_date for l in chain.legs if l.trade_date and "CLOSE" in (l.action or "")]
+            latest_closing_date = max(close_dates) if close_dates else chain.closed_date
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT c.id, c.symbol, c.name, c.active, c.opened_date, c.closed_date, c.created_at, COUNT(l.id) as leg_count
-                FROM chains c
-                LEFT JOIN legs l ON c.id = l.chain_id
-                GROUP BY c.id
-                ORDER BY c.created_at DESC
-            """)
-            return [dict(r) for r in cursor.fetchall()]
+                UPDATE chains 
+                SET deleted = 0, active = ?, closed_date = ?
+                WHERE id = ?
+            """, (1 if is_active else 0, None if is_active else latest_closing_date, chain_id))
+            conn.commit()
+            return cursor.rowcount > 0
 
     def delete_chain(self, chain_id: int) -> bool:
-        """Deletes a chain and its associated legs."""
+        """Deletes a chain and its associated legs (hard delete)."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM chains WHERE id = ?", (chain_id,))

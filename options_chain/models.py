@@ -126,6 +126,7 @@ class OptionsChain:
     active: bool = True
     opened_date: Optional[str] = None
     closed_date: Optional[str] = None
+    deleted: bool = False
     id: Optional[int] = None
 
     def add_leg(self, leg: OptionLeg) -> None:
