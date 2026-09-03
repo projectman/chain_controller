@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-900 text-slate-100">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Options Chain Controller{% endblock %}</title>
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="h-full flex flex-col antialiased selection:bg-indigo-500 selection:text-white">
+
+  <!-- Navigation Bar -->
+  <header class="bg-slate-800/80 backdrop-blur border-b border-slate-700/60 sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16">
+        <div class="flex items-center space-x-3">
+          <div class="w-9 h-9 rounded-lg bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+            </svg>
+          </div>
+          <div>
+            <span class="font-bold text-lg tracking-tight text-white">Chain Controller</span>
+            <span class="text-xs ml-1.5 px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 font-mono">v1.2</span>
+          </div>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <nav class="flex space-x-1 sm:space-x-2">
+          <a href="/import" class="px-3.5 py-2 rounded-md text-sm font-medium transition-colors {% if active_page == 'import' %}bg-indigo-600 text-white shadow-sm shadow-indigo-500/30{% else %}text-slate-300 hover:bg-slate-700/70 hover:text-white{% endif %}">
+            📥 Import Report
+          </a>
+          <a href="/chains" class="px-3.5 py-2 rounded-md text-sm font-medium transition-colors {% if active_page == 'chains' %}bg-indigo-600 text-white shadow-sm shadow-indigo-500/30{% else %}text-slate-300 hover:bg-slate-700/70 hover:text-white{% endif %}">
+            📋 Current Positions List
+          </a>
+        </nav>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Area -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-800 py-4 text-center text-xs text-slate-500">
+    Options Chain Controller &copy; 2026 &bull; Standalone Broker Activity Parser & Options Analysis Engine
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+
+{% block title %}Current Positions List - Options Chain Controller{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- Header -->
+  <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold text-white flex items-center gap-2">
+        <span>📋</span> Saved Strategy Positions & Chains
+      </h1>
+      <p class="text-sm text-slate-400 mt-1">
+        Explore options chains saved in <code class="bg-slate-900 px-1.5 py-0.5 rounded text-indigo-300">options_chains.db</code>. Filter by Active or Closed status.
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      <a href="/import" class="inline-flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium px-4 py-2 rounded-lg text-sm transition">
+        📥 Import New Activity
+      </a>
+    </div>
+  </div>
+
+  <!-- Filter & Controls Toolbar -->
+  <div class="bg-slate-800/70 border border-slate-700/70 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    
+    <!-- Active / Closed / All Selector -->
+    <div class="inline-flex p-1 bg-slate-900/80 rounded-lg border border-slate-700/60 text-xs font-semibold">
+      <a href="/chains?status=all{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'all' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+        All ({{ counts.all }})
+      </a>
+      <a href="/chains?status=active{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'active' %}bg-emerald-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+        Active ({{ counts.active }})
+      </a>
+      <a href="/chains?status=closed{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'closed' %}bg-slate-700 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+        Closed ({{ counts.closed }})
+      </a>
+    </div>
+
+    <!-- Search Input -->
+    <form method="GET" action="/chains" class="relative max-w-xs w-full">
+      <input type="hidden" name="status" value="{{ current_status }}">
+      <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+        <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+        </svg>
+      </div>
+      <input 
+        type="text" 
+        name="q" 
+        value="{{ search }}" 
+        placeholder="Filter symbol (e.g. QQQ, WDC)..." 
+        class="w-full pl-9 pr-8 py-1.5 bg-slate-900/90 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition"
+      >
+      {% if search %}
+      <a href="/chains?status={{ current_status }}" class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-white text-xs">
+        ✕
+      </a>
+      {% endif %}
+    </form>
+  </div>
+
+  <!-- Positions Table -->
+  <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl overflow-hidden shadow-xl">
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-sm text-slate-300">
+        <thead class="bg-slate-900/80 text-slate-400 uppercase tracking-wider text-xs border-b border-slate-700/80">
+          <tr>
+            <th class="px-4 py-3.5">ID</th>
+            <th class="px-4 py-3.5">Status</th>
+            <th class="px-4 py-3.5">Symbol</th>
+            <th class="px-4 py-3.5">Strategy Name</th>
+            <th class="px-4 py-3.5">Opened</th>
+            <th class="px-4 py-3.5">Closed</th>
+            <th class="px-4 py-3.5 text-center">Legs</th>
+            <th class="px-4 py-3.5 text-right">Net Outlay</th>
+            <th class="px-4 py-3.5 text-right">Max Profit / Realized</th>
+            <th class="px-4 py-3.5 text-center">Details</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-700/50">
+          {% if not chains %}
+          <tr>
+            <td colspan="10" class="px-6 py-12 text-center text-slate-400">
+              No strategy positions found matching the filter.
+            </td>
+          </tr>
+          {% endif %}
+
+          {% for c in chains %}
+          <tr class="hover:bg-slate-700/30 transition cursor-pointer" onclick="toggleDetails({{ c.id }})">
+            <td class="px-4 py-3.5 font-mono text-xs text-slate-400">#{{ c.id }}</td>
+            <td class="px-4 py-3.5">
+              {% if c.active %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                ACTIVE
+              </span>
+              {% else %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-600/30 text-slate-400 border border-slate-600/50">
+                CLOSED
+              </span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3.5 font-bold text-white text-base">{{ c.symbol }}</td>
+            <td class="px-4 py-3.5 font-medium text-slate-200">{{ c.name }}</td>
+            <td class="px-4 py-3.5 font-mono text-xs text-slate-400">{{ c.opened_date or '-' }}</td>
+            <td class="px-4 py-3.5 font-mono text-xs text-slate-400">
+              {% if c.active %}<span class="text-emerald-400 font-medium">Open</span>{% else %}{{ c.closed_date or '-' }}{% endif %}
+            </td>
+            <td class="px-4 py-3.5 text-center">
+              <span class="px-2 py-0.5 rounded bg-slate-700 text-xs font-bold text-slate-300">{{ c.legs|length }}</span>
+            </td>
+            <td class="px-4 py-3.5 text-right font-mono font-bold {% if c.net_outlay < 0 %}text-emerald-400{% else %}text-amber-400{% endif %}">
+              {% if c.net_outlay < 0 %}-${{ "%.2f"|format(c.net_outlay|abs) }}{% else %}${{ "%.2f"|format(c.net_outlay) }}{% endif %}
+            </td>
+            <td class="px-4 py-3.5 text-right font-mono text-xs text-slate-200">
+              {% if not c.active %}
+                <span class="{% if c.net_outlay < 0 %}text-emerald-400 font-bold{% else %}text-red-400 font-bold{% endif %}">
+                  {% if c.net_outlay < 0 %}+${{ "%.2f"|format(c.net_outlay|abs) }}{% else %}-${{ "%.2f"|format(c.net_outlay) }}{% endif %}
+                </span>
+              {% else %}
+                <span class="text-slate-300 font-semibold">{{ c.max_profit }}</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3.5 text-center">
+              <button class="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition" title="Toggle Legs">
+                <svg id="chevron-{{ c.id }}" class="w-4 h-4 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+              </button>
+            </td>
+          </tr>
+
+          <!-- Expandable Details Row -->
+          <tr id="details-{{ c.id }}" class="hidden bg-slate-900/60 border-t border-b border-slate-700/60">
+            <td colspan="10" class="px-6 py-4">
+              <div class="bg-slate-800/80 rounded-lg p-4 border border-slate-700/60 space-y-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Option Legs Breakdown</span>
+                  <div class="text-xs text-slate-400">
+                    Commissions & Fees: <strong class="text-slate-200 font-mono">${{ "%.2f"|format(c.commissions_and_fees) }}</strong>
+                    {% if c.breakeven_points %}
+                    &bull; Breakeven: <strong class="text-indigo-400 font-mono">${{ c.breakeven_points|join(', $') }}</strong>
+                    {% endif %}
+                  </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                  <table class="w-full text-left text-xs text-slate-300">
+                    <thead class="bg-slate-900/60 text-slate-400 uppercase text-[10px]">
+                      <tr>
+                        <th class="px-3 py-2">Action</th>
+                        <th class="px-3 py-2">Side</th>
+                        <th class="px-3 py-2">Type</th>
+                        <th class="px-3 py-2">Strike</th>
+                        <th class="px-3 py-2">Expiration</th>
+                        <th class="px-3 py-2">Contracts</th>
+                        <th class="px-3 py-2">Price</th>
+                        <th class="px-3 py-2">Trade Date</th>
+                        <th class="px-3 py-2 text-right">Leg Outlay</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-700/40">
+                      {% for leg in c.legs %}
+                      <tr class="hover:bg-slate-700/20">
+                        <td class="px-3 py-2 font-mono font-medium {% if 'OPEN' in (leg.action or '') %}text-indigo-400{% else %}text-amber-400{% endif %}">
+                          {{ leg.action or '-' }}
+                        </td>
+                        <td class="px-3 py-2">
+                          <span class="px-1.5 py-0.5 rounded font-bold text-[10px] {% if leg.side == 'BUY' %}bg-blue-500/20 text-blue-400{% else %}bg-purple-500/20 text-purple-400{% endif %}">
+                            {{ leg.side }}
+                          </span>
+                        </td>
+                        <td class="px-3 py-2 font-semibold text-white">{{ leg.type }}</td>
+                        <td class="px-3 py-2 font-mono font-bold text-white">${{ "%.2f"|format(leg.strike) }}</td>
+                        <td class="px-3 py-2 font-mono text-slate-400">{{ leg.expiration_date }}</td>
+                        <td class="px-3 py-2 font-bold">{{ leg.quantity }}</td>
+                        <td class="px-3 py-2 font-mono">${{ "%.2f"|format(leg.entry_price) }}</td>
+                        <td class="px-3 py-2 font-mono text-slate-400">{{ leg.trade_date or '-' }}</td>
+                        <td class="px-3 py-2 text-right font-mono font-bold {% if leg.outlay < 0 %}text-emerald-400{% else %}text-amber-400{% endif %}">
+                          {% if leg.outlay < 0 %}-${{ "%.2f"|format(leg.outlay|abs) }}{% else %}${{ "%.2f"|format(leg.outlay) }}{% endif %}
+                        </td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleDetails(chainId) {
+  const row = document.getElementById(`details-${chainId}`);
+  const chevron = document.getElementById(`chevron-${chainId}`);
+  if (row.classList.contains("hidden")) {
+    row.classList.remove("hidden");
+    chevron.classList.add("rotate-180");
+  } else {
+    row.classList.add("hidden");
+    chevron.classList.remove("rotate-180");
+  }
+}
+</script>
+{% endblock %}

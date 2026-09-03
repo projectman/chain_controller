@@ -145,6 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
     del_leg_p = subparsers.add_parser("delete-leg", help="Delete a leg from database by leg ID")
     del_leg_p.add_argument("--leg-id", type=int, required=True, help="ID of leg to delete")
 
+    # Command: web
+    web_p = subparsers.add_parser("web", help="Start the web application dashboard")
+    web_p.add_argument("--host", default="127.0.0.1", help="Host address (default: 127.0.0.1)")
+    web_p.add_argument("--port", type=int, default=5001, help="Port number (default: 5001)")
+    web_p.add_argument("--dir", default="sources", help="Path to sources directory")
+
     return parser
 
 
@@ -284,6 +290,15 @@ def main_cli(args=None):
             print(f"Successfully deleted leg ID {parsed.leg_id}.")
         else:
             print(f"Leg ID {parsed.leg_id} not found.")
+
+    elif parsed.command == "web":
+        from web_app import create_app
+        app = create_app(db_path=parsed.db, sources_dir=parsed.dir)
+        print(f"\n=======================================================")
+        print(f"  Options Chain Controller Web Dashboard Running")
+        print(f"  URL: http://{parsed.host}:{parsed.port}")
+        print(f"=======================================================\n")
+        app.run(host=parsed.host, port=parsed.port, debug=False)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+
+{% block title %}Import & Today's Positions Report - Options Chain Controller{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- Header & Import Action Bar -->
+  <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold text-white flex items-center gap-2">
+        <span>📥</span> Broker Activity Import & Today's Report
+      </h1>
+      <p class="text-sm text-slate-400 mt-1">
+        Scan <code class="bg-slate-900 px-1.5 py-0.5 rounded text-indigo-300">sources/Activity*.csv</code>, deduplicate transactions via SHA-256, and view today's strategy chains.
+      </p>
+    </div>
+    <div class="flex items-center gap-3">
+      <button id="importBtn" onclick="runImport()" class="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-medium px-5 py-2.5 rounded-lg shadow-lg shadow-indigo-600/30 transition">
+        <svg id="importIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+        </svg>
+        <span id="importBtnText">Run Import from sources/</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Notification Banner -->
+  <div id="statusBanner" class="hidden p-4 rounded-xl border transition duration-300"></div>
+
+  <!-- Top Metric Cards -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-4 shadow-sm">
+      <div class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Activity Date</div>
+      <div class="text-xl font-bold text-indigo-400 mt-1" id="reportDateBadge">{{ selected_date or 'Latest Activity' }}</div>
+    </div>
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-4 shadow-sm">
+      <div class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Strategies on Date</div>
+      <div class="text-2xl font-bold text-white mt-1" id="statChainsCount">{{ chains|length }}</div>
+    </div>
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-4 shadow-sm">
+      <div class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Total Legs on Date</div>
+      <div class="text-2xl font-bold text-emerald-400 mt-1" id="statLegsCount">{{ total_legs_count }}</div>
+    </div>
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-4 shadow-sm">
+      <div class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Net Cash Outlay</div>
+      <div class="text-2xl font-bold {% if total_net_outlay < 0 %}text-emerald-400{% else %}text-amber-400{% endif %} mt-1" id="statOutlay">
+        {% if total_net_outlay < 0 %}-${{ "%.2f"|format(total_net_outlay|abs) }} (Credit){% else %}${{ "%.2f"|format(total_net_outlay) }} (Debit){% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Date Selector Tabs -->
+  {% if available_dates %}
+  <div class="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-700/60">
+    <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider mr-2">Filter Activity Date:</span>
+    {% for dt in available_dates %}
+    <a href="/import?date={{ dt }}" class="px-3 py-1.5 rounded-lg text-xs font-mono transition {% if dt == selected_date %}bg-indigo-600 text-white font-semibold shadow-sm{% else %}bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white{% endif %}">
+      {{ dt }}
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Today's Strategy Chains List -->
+  <div class="space-y-4">
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-bold text-white flex items-center gap-2">
+        <span>📊</span> Positions Gathered Within Strategy Chains
+        <span class="text-xs font-normal text-slate-400">({{ chains|length }} strategies found on {{ selected_date }})</span>
+      </h2>
+    </div>
+
+    {% if not chains %}
+    <div class="bg-slate-800/60 border border-dashed border-slate-700 rounded-xl p-12 text-center">
+      <p class="text-slate-400 text-base">No option transactions found on date <strong class="text-white">{{ selected_date }}</strong>.</p>
+      <p class="text-slate-500 text-sm mt-1">Click "Run Import from sources/" to scan broker files.</p>
+    </div>
+    {% endif %}
+
+    {% for c in chains %}
+    <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl overflow-hidden shadow-lg transition hover:border-slate-600">
+      <!-- Strategy Header -->
+      <div class="p-5 bg-slate-800/60 border-b border-slate-700/70 flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-lg bg-slate-700/80 flex items-center justify-center font-bold text-indigo-400 text-base border border-slate-600/50">
+            {{ c.symbol }}
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-white text-lg">{{ c.name }}</span>
+              {% if c.active %}
+              <span class="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                ACTIVE
+              </span>
+              {% else %}
+              <span class="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-slate-600/30 text-slate-300 border border-slate-600/50">
+                CLOSED
+              </span>
+              {% endif %}
+            </div>
+            <div class="text-xs text-slate-400 mt-0.5">
+              <span>Opened: <strong class="text-slate-300">{{ c.opened_date or 'N/A' }}</strong></span>
+              {% if not c.active %}
+              <span class="ml-3">Closed: <strong class="text-slate-300">{{ c.closed_date or 'N/A' }}</strong></span>
+              {% endif %}
+              <span class="ml-3">Legs: <strong class="text-slate-300">{{ c.legs|length }}</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Financial Metrics Badge -->
+        <div class="flex items-center gap-4 text-right">
+          <div>
+            <div class="text-xs text-slate-400 uppercase font-semibold">Net Outlay</div>
+            <div class="text-base font-bold {% if c.net_outlay < 0 %}text-emerald-400{% else %}text-amber-400{% endif %}">
+              {% if c.net_outlay < 0 %}-${{ "%.2f"|format(c.net_outlay|abs) }} (Credit){% else %}${{ "%.2f"|format(c.net_outlay) }} (Debit){% endif %}
+            </div>
+          </div>
+          {% if c.commissions_and_fees > 0 %}
+          <div class="border-l border-slate-700 pl-4">
+            <div class="text-xs text-slate-400 uppercase font-semibold">Fees & Comm</div>
+            <div class="text-sm font-medium text-slate-300">${{ "%.2f"|format(c.commissions_and_fees) }}</div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Strategy Legs Table -->
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs text-slate-300">
+          <thead class="bg-slate-900/60 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-700/60">
+            <tr>
+              <th class="px-4 py-2.5">Action</th>
+              <th class="px-4 py-2.5">Side</th>
+              <th class="px-4 py-2.5">Type</th>
+              <th class="px-4 py-2.5">Strike</th>
+              <th class="px-4 py-2.5">Expiration</th>
+              <th class="px-4 py-2.5">Contracts</th>
+              <th class="px-4 py-2.5">Price</th>
+              <th class="px-4 py-2.5">Trade Date</th>
+              <th class="px-4 py-2.5 text-right">Initial Outlay</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-700/40">
+            {% for leg in c.legs %}
+            <tr class="hover:bg-slate-700/30 transition">
+              <td class="px-4 py-2.5 font-mono font-medium {% if 'OPEN' in (leg.action or '') %}text-indigo-400{% else %}text-amber-400{% endif %}">
+                {{ leg.action or '-' }}
+              </td>
+              <td class="px-4 py-2.5">
+                <span class="px-1.5 py-0.5 rounded font-bold text-[10px] {% if leg.side == 'BUY' %}bg-blue-500/20 text-blue-400{% else %}bg-purple-500/20 text-purple-400{% endif %}">
+                  {{ leg.side }}
+                </span>
+              </td>
+              <td class="px-4 py-2.5 font-semibold text-white">{{ leg.type }}</td>
+              <td class="px-4 py-2.5 font-mono font-bold text-white">${{ "%.2f"|format(leg.strike) }}</td>
+              <td class="px-4 py-2.5 font-mono text-slate-400">{{ leg.expiration_date }}</td>
+              <td class="px-4 py-2.5 font-bold">{{ leg.quantity }}</td>
+              <td class="px-4 py-2.5 font-mono">${{ "%.2f"|format(leg.entry_price) }}</td>
+              <td class="px-4 py-2.5 font-mono text-slate-400">{{ leg.trade_date or '-' }}</td>
+              <td class="px-4 py-2.5 text-right font-mono font-bold {% if leg.outlay < 0 %}text-emerald-400{% else %}text-amber-400{% endif %}">
+                {% if leg.outlay < 0 %}-${{ "%.2f"|format(leg.outlay|abs) }}{% else %}${{ "%.2f"|format(leg.outlay) }}{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endfor %}
+
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function runImport() {
+  const btn = document.getElementById("importBtn");
+  const text = document.getElementById("importBtnText");
+  const banner = document.getElementById("statusBanner");
+
+  btn.disabled = true;
+  btn.classList.add("opacity-70");
+  text.textContent = "Importing & Analyzing...";
+
+  try {
+    const res = await fetch("/api/run-import", { method: "POST" });
+    const data = await res.json();
+
+    if (data.success) {
+      banner.className = "p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 flex items-center justify-between";
+      banner.innerHTML = `
+        <div class="flex items-center gap-2">
+          <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+          <span><strong>Import Complete:</strong> Processed ${data.processed_files} files &bull; ${data.new_legs} new legs imported &bull; ${data.skipped_duplicates} duplicate legs skipped.</span>
+        </div>
+        <button onclick="location.reload()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-3 py-1.5 rounded-lg font-medium">Refresh Page</button>
+      `;
+      banner.classList.remove("hidden");
+      setTimeout(() => location.reload(), 1200);
+    } else {
+      banner.className = "p-4 rounded-xl border border-red-500/30 bg-red-500/10 text-red-300";
+      banner.innerHTML = `<strong>Error:</strong> ${data.error || 'Failed to import'}`;
+      banner.classList.remove("hidden");
+    }
+  } catch (err) {
+    banner.className = "p-4 rounded-xl border border-red-500/30 bg-red-500/10 text-red-300";
+    banner.innerHTML = `<strong>Network Error:</strong> ${err.message}`;
+    banner.classList.remove("hidden");
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove("opacity-70");
+    text.textContent = "Run Import from sources/";
+  }
+}
+</script>
+{% endblock %}
