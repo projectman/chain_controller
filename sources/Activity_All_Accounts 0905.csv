@@ -1,0 +1,35 @@
+﻿"Activity 
+All Accounts 
+as of 09/05/2026 at 10:59:04 AM"
+
+Date,Activity Description,Symbol,Quantity,Price,Amount,Cash Balance,Description,Commission,Fees,Account
+Sep-4-2026,YOU SOLD OPENING TRANSACTION,TLT261016C85,-6,0.29,170.02,"+40,891.44",CALL (TLT) ISHARES TR 20 YR TR OCT 16 26 $85 (100 SHS),3.90,0.08,Traditional IRA *0663
+Sep-4-2026,YOU BOUGHT CLOSING TRANSACTION,TLT260918C85,6,0.06,-36.08,"+40,721.42",CALL (TLT) ISHARES TR 20 YR TR SEP 18 26 $85 (100 SHS),--,0.08,Traditional IRA *0663
+Sep-3-2026,YOU SOLD CLOSING TRANSACTION,WMT261016P70,-2,0.01,1.87,"+40,757.50",PUT (WMT) WALMART INC COM OCT 16 26 $70 (100 SHS),0.10,0.03,Traditional IRA *0663
+Sep-3-2026,YOU BOUGHT CLOSING TRANSACTION,WMT261016P100,2,0.86,-173.33,"+40,755.63",PUT (WMT) WALMART INC COM OCT 16 26 $100 (100 SHS),1.30,0.03,Traditional IRA *0663
+Sep-3-2026,YOU SOLD OPENING TRANSACTION,MSFT261016P480,-1,5.65,564.32,"+40,928.96",PUT (MSFT) MICROSOFT CORP OCT 16 26 $480 (100 SHS),0.65,0.03,Traditional IRA *0663
+Sep-3-2026,YOU BOUGHT CLOSING TRANSACTION,MSFT260918P450,1,0.28,-28.01,"+40,364.64",PUT (MSFT) MICROSOFT CORP SEP 18 26 $450 (100 SHS),--,0.01,Traditional IRA *0663
+Sep-4-2026,DIVIDEND RECEIVED,TLT,--,--,62.94,"+28,318.53",ISHARES TR 20 YR TR BD ETF,--,--,MAIN BROKER *1319
+Sep-4-2026,YOU SOLD OPENING TRANSACTION,SMCI261023C35,-3,6.51,"1,950.96","+28,255.59",CALL (SMCI) SUPER MICRO COMPUTER OCT 23 26 $35 (100 SHS),1.95,0.09,MAIN BROKER *1319
+Sep-4-2026,YOU SOLD OPENING TRANSACTION,ADBE261023C245,-1,32.60,"3,259.27","+26,304.63",CALL (ADBE) ADOBE INC COM OCT 23 26 $245 (100 SHS),0.65,0.08,MAIN BROKER *1319
+Sep-4-2026,YOU BOUGHT CLOSING TRANSACTION,VZ260918C43,5,7.40,"-3,703.32","+23,045.36",CALL (VZ) VERIZON SEP 18 26 $43 (100 SHS),3.25,0.07,MAIN BROKER *1319
+Sep-4-2026,YOU BOUGHT CLOSING TRANSACTION,SMCI260918C33,3,6.59,"-1,978.99","+26,748.68",CALL (SMCI) SUPER MICRO COMPUTER SEP 18 26 $33 (100 SHS),1.95,0.04,MAIN BROKER *1319
+Sep-4-2026,YOU SOLD OPENING TRANSACTION,VZ261016C43,-5,7.49,"3,741.60","+28,727.67",CALL (VZ) VERIZON OCT 16 26 $43 (100 SHS),3.25,0.15,MAIN BROKER *1319
+Sep-4-2026,YOU SOLD OPENING TRANSACTION,V261120C345,-1,37.45,"3,744.26","+24,986.07",CALL (V) VISA INC NOV 20 26 $345 (100 SHS),0.65,0.09,MAIN BROKER *1319
+Sep-4-2026,YOU BOUGHT CLOSING TRANSACTION,V260918C340,1,35.90,"-3,590.66","+21,241.81",CALL (V) VISA INC SEP 18 26 $340 (100 SHS),0.65,0.01,MAIN BROKER *1319
+Sep-4-2026,YOU BOUGHT CLOSING TRANSACTION,ADBE260918C240,1,31.50,"-3,150.66","+24,832.47",CALL (ADBE) ADOBE INC COM SEP 18 26 $240 (100 SHS),0.65,0.01,MAIN BROKER *1319
+Sep-3-2026,YOU BOUGHT CLOSING TRANSACTION,GOOGL260904P340,1,2.65,-265.66,"+27,983.13",PUT (GOOGL) ALPHABET INC CAP STK SEP 04 26 $340 (100 SHS),0.65,0.01,MAIN BROKER *1319
+Sep-3-2026,YOU BOUGHT CLOSING TRANSACTION,AVGO261016P310,1,2.50,-250.66,"+28,248.79",PUT (AVGO) BROADCOM INC COM OCT 16 26 $310 (100 SHS),0.65,0.01,MAIN BROKER *1319
+Sep-3-2026,YOU SOLD OPENING TRANSACTION,AVGO261016P310,-1,4.35,434.34,"+28,499.45",PUT (AVGO) BROADCOM INC COM OCT 16 26 $310 (100 SHS),0.65,0.01,MAIN BROKER *1319
+Sep-3-2026,YOU SOLD CLOSING TRANSACTION,GOOGL270617P320,-1,25.80,"2,579.28","+28,065.11",PUT (GOOGL) ALPHABET INC CAP STK JUN 17 27 $320 (100 SHS),0.65,0.07,MAIN BROKER *1319
+,Totals,,,,"  3,331.49",,,  21.55,  0.90,
+
+Disclosure
+"The data and information in this spreadsheet is provided to you solely for your use and is not for distribution. 
+The spreadsheet is provided for informational purposes only, and is not intended to provide advice, nor should it be construed as an offer to sell, a solicitation of an offer to buy or a recommendation for any security 
+or digital asset by Fidelity or any third party. Data and information shown is based on information known to Fidelity as of the date it was exported and is subject to change. 
+It should not be used in place of your account statements or trade confirmations and is not intended for tax reporting purposes. 
+For more information on the data included in this spreadsheet, including any limitations thereof, go to Fidelity.com.
+ 
+Brokerage services are provided by Fidelity Brokerage Services LLC (FBS), 900 Salem Street, Smithfield, RI 02917. Custody and other services provided by National Financial Services LLC (NFS). 
+Both are Fidelity Investment companies and members SIPC, NYSE. Neither FBS nor NFS offer crypto as a direct investment nor provide trading or custody services for such assets."

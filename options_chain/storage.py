@@ -1,7 +1,8 @@
 import sqlite3
 import csv
 import os
-from typing import List, Optional, Dict, Any, Set
+from contextlib import contextmanager
+from typing import List, Optional, Dict, Any, Set, Tuple
 from .models import OptionsChain, OptionLeg, OptionType, OptionSide
 
 
@@ -12,11 +13,15 @@ class ChainStorage:
         self.db_path = db_path
         self._init_db()
 
-    def _get_connection(self) -> sqlite3.Connection:
+    @contextmanager
+    def _get_connection(self):
         conn = sqlite3.connect(self.db_path)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def _init_db(self) -> None:
         """Initializes database schema if tables do not exist and runs column migrations."""
