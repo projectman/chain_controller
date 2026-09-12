@@ -1,7 +1,7 @@
 import os
 import pytest
 from options_chain.activity_parser import parse_occ_symbol, ActivityParser
-from options_chain.models import OptionType, OptionSide, TradeAction
+from options_chain.models import OptionLeg, OptionType, OptionSide, TradeAction
 from options_chain.storage import ChainStorage
 
 
@@ -109,9 +109,33 @@ def test_same_day_underlying_grouping_and_position_interaction(tmp_path):
     and closing trades across dates match and close the active chain."""
     db_file = str(tmp_path / "test_interaction.db")
     storage = ChainStorage(db_path=db_file)
-    sources_dir = os.path.join(os.path.dirname(__file__), "..", "sources")
 
-    res = ActivityParser.import_sources_folder(sources_dir=sources_dir, storage=storage)
+    test_legs = [
+        # 1. WFC: 2 opening legs on 2026-08-27 with different expirations (2027-09-17 and 2026-10-16)
+        OptionLeg(strike=70.0, option_type=OptionType.CALL, side=OptionSide.BUY, quantity=1, entry_price=5.0, action="BUY_TO_OPEN", trade_date="2026-08-27", occ_symbol="WFC270917C70"),
+        OptionLeg(strike=75.0, option_type=OptionType.CALL, side=OptionSide.SELL, quantity=1, entry_price=3.0, action="SELL_TO_OPEN", trade_date="2026-08-27", occ_symbol="WFC261016C75"),
+
+        # 2. WDC: 2 opening legs on 2026-08-24, closed with 2 closing legs on 2026-08-31
+        OptionLeg(strike=200.0, option_type=OptionType.PUT, side=OptionSide.BUY, quantity=1, entry_price=1.0, action="BUY_TO_OPEN", trade_date="2026-08-24", occ_symbol="WDC260904P200"),
+        OptionLeg(strike=205.0, option_type=OptionType.PUT, side=OptionSide.SELL, quantity=1, entry_price=2.0, action="SELL_TO_OPEN", trade_date="2026-08-24", occ_symbol="WDC260904P205"),
+        OptionLeg(strike=200.0, option_type=OptionType.PUT, side=OptionSide.SELL, quantity=1, entry_price=0.2, action="SELL_TO_CLOSE", trade_date="2026-08-31", occ_symbol="WDC260904P200"),
+        OptionLeg(strike=205.0, option_type=OptionType.PUT, side=OptionSide.BUY, quantity=1, entry_price=0.1, action="BUY_TO_CLOSE", trade_date="2026-08-31", occ_symbol="WDC260904P205"),
+
+        # 3. QQQ: 3 opening legs on 2026-08-31 (butterfly spread)
+        OptionLeg(strike=450.0, option_type=OptionType.CALL, side=OptionSide.BUY, quantity=1, entry_price=4.0, action="BUY_TO_OPEN", trade_date="2026-08-31", occ_symbol="QQQ260918C450"),
+        OptionLeg(strike=460.0, option_type=OptionType.CALL, side=OptionSide.SELL, quantity=2, entry_price=2.0, action="SELL_TO_OPEN", trade_date="2026-08-31", occ_symbol="QQQ260918C460"),
+        OptionLeg(strike=470.0, option_type=OptionType.CALL, side=OptionSide.BUY, quantity=1, entry_price=1.0, action="BUY_TO_OPEN", trade_date="2026-08-31", occ_symbol="QQQ260918C470"),
+
+        # 4. ORCL: Rolls on 2026-08-04 and 2026-08-17 unified into single active rolling chain
+        OptionLeg(strike=145.0, option_type=OptionType.CALL, side=OptionSide.BUY, quantity=1, entry_price=8.39, action="BUY_TO_CLOSE", trade_date="2026-08-04", occ_symbol="ORCL260821C145"),
+        OptionLeg(strike=150.0, option_type=OptionType.CALL, side=OptionSide.SELL, quantity=1, entry_price=13.77, action="SELL_TO_OPEN", trade_date="2026-08-04", occ_symbol="ORCL260918C150"),
+        OptionLeg(strike=150.0, option_type=OptionType.CALL, side=OptionSide.BUY, quantity=1, entry_price=10.97, action="BUY_TO_CLOSE", trade_date="2026-08-17", occ_symbol="ORCL260918C150"),
+        OptionLeg(strike=155.0, option_type=OptionType.CALL, side=OptionSide.SELL, quantity=1, entry_price=12.12, action="SELL_TO_OPEN", trade_date="2026-08-17", occ_symbol="ORCL261016C155"),
+    ]
+
+    chains = ActivityParser.build_chains_from_legs(test_legs)
+    for c in chains:
+        storage.save_chain(c)
 
     # 1. WFC: 2 opening legs on 2026-08-27 with different expirations (2027-09-17 and 2026-10-16)
     wfc_chain = storage.get_chain_by_name("WFC 2026-08-27 Strategy")

@@ -324,6 +324,9 @@ class ActivityParser:
                     c.active = True
                     c.closed_date = None
 
+        # Filter out any empty chains that have no legs
+        chains_pool = [c for c in chains_pool if c.legs]
+
         return chains_pool
 
     @classmethod
@@ -372,13 +375,19 @@ class ActivityParser:
 
         # Build and match chains
         resolved_chains = cls.build_chains_from_legs(all_legs, existing_chains=existing_chains)
+        resolved_chains = [c for c in resolved_chains if c.legs]
 
         if storage:
             for chain in resolved_chains:
+                if not chain.legs:
+                    continue
                 existing_db = storage.get_chain_by_name(chain.name)
                 if existing_db:
                     chain.id = existing_db.id
                 storage.save_chain(chain)
+
+            # Purge any remaining empty chains from database
+            storage.clean_empty_chains()
 
         return {
             "processed_files": len(files),

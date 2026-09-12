@@ -296,10 +296,19 @@ class ChainStorage:
                 LEFT JOIN legs l ON c.id = l.chain_id
                 {where_sql}
                 GROUP BY c.id
+                HAVING COUNT(l.id) > 0
                 ORDER BY c.created_at DESC
             """
             cursor.execute(query)
             return [dict(r) for r in cursor.fetchall()]
+
+    def clean_empty_chains(self) -> int:
+        """Removes any orphaned chains from the database that have 0 associated legs."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM chains WHERE id NOT IN (SELECT DISTINCT chain_id FROM legs);")
+            conn.commit()
+            return cursor.rowcount
 
     def soft_delete_chain(self, chain_id: int) -> bool:
         """Marks a chain as deleted (soft delete) without dropping table records."""
