@@ -89,17 +89,29 @@ def test_short_puts_web_endpoints(tmp_path):
     app = create_app(db_path=db_file, sources_dir="sources")
     app.config["TESTING"] = True
     with app.test_client() as client:
-        # 1. Page test
-        res = client.get("/short-puts?initial_date=2026-07-01")
+        # 1. Page test (All)
+        res = client.get("/short-puts?initial_date=2026-07-01&status=all")
         assert res.status_code == 200
         html = res.get_data(as_text=True)
         assert "Short Puts &amp; Credit Puts Analyzer" in html or "Short Puts" in html
         assert "TGT 2026-07-07 Short Put" in html
+        assert "Active (1)" in html
+        assert "Closed (0)" in html
         assert "riskChart" in html
         assert "profitChart" in html
         assert "roiChart" in html
 
-        # 2. API test
+        # 2. Active filter
+        res_active = client.get("/short-puts?initial_date=2026-07-01&status=active")
+        assert res_active.status_code == 200
+        assert "TGT 2026-07-07 Short Put" in res_active.get_data(as_text=True)
+
+        # 3. Closed filter (TGT is active, so should show 0 closed rows)
+        res_closed = client.get("/short-puts?initial_date=2026-07-01&status=closed")
+        assert res_closed.status_code == 200
+        assert "No qualifying Short Put or Credit Put Spread positions found" in res_closed.get_data(as_text=True)
+
+        # 4. API test
         api_res = client.get("/api/short-puts/data?initial_date=2026-07-01")
         assert api_res.status_code == 200
         data = api_res.get_json()

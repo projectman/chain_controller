@@ -219,15 +219,35 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
         if not initial_date:
             initial_date = earliest_date
 
-        positions = ShortPutsAnalyzer.find_qualifying_positions(storage, initial_date=initial_date)
-        metrics = ShortPutsAnalyzer.compute_daily_metrics(positions, initial_date=initial_date)
+        status_filter = request.args.get("status", "all").lower()
+
+        all_positions = ShortPutsAnalyzer.find_qualifying_positions(storage, initial_date=initial_date)
+        metrics = ShortPutsAnalyzer.compute_daily_metrics(all_positions, initial_date=initial_date)
+
+        count_all = len(all_positions)
+        count_active = sum(1 for p in all_positions if p["active"])
+        count_closed = sum(1 for p in all_positions if not p["active"])
+
+        if status_filter == "active":
+            displayed_positions = [p for p in all_positions if p["active"]]
+        elif status_filter == "closed":
+            displayed_positions = [p for p in all_positions if not p["active"]]
+        else:
+            status_filter = "all"
+            displayed_positions = all_positions
 
         return render_template(
             "short_puts_analyzer.html",
             active_page="short_puts",
             initial_date=initial_date,
             earliest_date=earliest_date,
-            positions=positions,
+            current_status=status_filter,
+            counts={
+                "all": count_all,
+                "active": count_active,
+                "closed": count_closed
+            },
+            positions=displayed_positions,
             metrics=metrics
         )
 

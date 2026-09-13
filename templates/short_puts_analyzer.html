@@ -20,6 +20,7 @@
     <!-- Initial Date Picker Form & Presets -->
     <div class="bg-slate-900/90 border border-slate-700/70 p-3 rounded-xl flex flex-col sm:flex-row items-center gap-3">
       <form method="GET" action="/short-puts" class="flex items-center gap-2" id="dateForm">
+        <input type="hidden" name="status" value="{{ current_status }}">
         <label for="initial_date" class="text-xs font-semibold uppercase tracking-wider text-slate-400">
           Initial Date:
         </label>
@@ -166,7 +167,7 @@
 
   <!-- Positions Breakdown Table -->
   <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl overflow-hidden shadow-xl">
-    <div class="p-4 border-b border-slate-700/80 flex items-center justify-between">
+    <div class="p-4 border-b border-slate-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div>
         <h3 class="text-sm font-bold text-white uppercase tracking-wider">
           Included Short Put & Credit Put Spread Positions
@@ -175,9 +176,22 @@
           Filtered from initial date <strong class="text-slate-200">{{ initial_date }}</strong> onwards.
         </p>
       </div>
-      <span class="px-2.5 py-1 rounded bg-slate-700 text-slate-300 text-xs font-bold">
-        {{ positions|length }} Positions
-      </span>
+
+      <!-- Selector: All / Active / Closed -->
+      <div class="inline-flex p-1 bg-slate-900/90 rounded-lg border border-slate-700/80 text-xs font-semibold self-start sm:self-auto shadow-inner">
+        <a href="/short-puts?initial_date={{ initial_date }}&status=all" 
+           class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'all' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+          All ({{ counts.all }})
+        </a>
+        <a href="/short-puts?initial_date={{ initial_date }}&status=active" 
+           class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'active' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+          Active ({{ counts.active }})
+        </a>
+        <a href="/short-puts?initial_date={{ initial_date }}&status=closed" 
+           class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'closed' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+          Closed ({{ counts.closed }})
+        </a>
+      </div>
     </div>
 
     <div class="overflow-x-auto">
