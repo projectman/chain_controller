@@ -199,6 +199,10 @@ class ShortPutsAnalyzer:
 
         total_premium_received = sum(p["net_credit"] for p in positions)
         total_premium_at_risk = sum(p["net_credit"] for p in positions if p["active"])
+        total_risk_all = sum(p["risk"] for p in positions)
+
+        current_credit_to_risk_pct = round((total_premium_at_risk / current_risk * 100.0), 2) if current_risk > 0 else 0.0
+        total_credit_to_risk_pct = round((total_premium_received / total_risk_all * 100.0), 2) if total_risk_all > 0 else 0.0
 
         return {
             "initial_date": initial_date,
@@ -211,6 +215,8 @@ class ShortPutsAnalyzer:
                 "current_risk": current_risk,
                 "total_premium_at_risk": round(total_premium_at_risk, 2),
                 "total_premium_received": round(total_premium_received, 2),
+                "current_credit_to_risk_pct": current_credit_to_risk_pct,
+                "total_credit_to_risk_pct": total_credit_to_risk_pct,
                 "total_realized_profit": total_profit,
                 "current_annualized_roi": current_roi,
                 "average_risk": round(avg_risk_overall, 2)

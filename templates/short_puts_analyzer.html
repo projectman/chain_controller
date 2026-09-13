@@ -326,6 +326,54 @@
         {% endif %}
       </table>
     </div>
+
+    <!-- Relative % Value: Total Received Credit to Total Capital at Risk -->
+    <div class="p-4 bg-slate-900/90 border-t border-slate-700/80 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div class="flex flex-wrap items-center gap-6">
+        <!-- Metric 1: Selection Credit-to-Risk % -->
+        <div class="flex items-center gap-2.5">
+          <span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>
+          <div>
+            <div class="text-xs text-slate-400 font-medium uppercase tracking-wider">
+              Total Received Credit to Capital at Risk (Current Table Selection):
+            </div>
+            {% set sel_risk = positions | map(attribute='risk') | sum %}
+            {% set sel_credit = positions | map(attribute='net_credit') | sum %}
+            {% set sel_pct = (sel_credit / sel_risk * 100.0) if sel_risk > 0 else 0.0 %}
+            <div class="font-mono font-bold text-base text-cyan-300">
+              {{ "{:,.2f}".format(sel_pct) }}%
+              <span class="text-xs font-normal text-slate-400 ml-1.5 font-sans">
+                (${{ "{:,.2f}".format(sel_credit) }} credit on ${{ "{:,.2f}".format(sel_risk) }} risk)
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="hidden md:block w-px h-8 bg-slate-700"></div>
+
+        <!-- Metric 2: Current Open Active Credit-to-Risk % -->
+        <div class="flex items-center gap-2.5">
+          <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+          <div>
+            <div class="text-xs text-slate-400 font-medium uppercase tracking-wider">
+              Current Open Credit to Capital at Risk (Active Today):
+            </div>
+            <div class="font-mono font-bold text-base text-amber-300">
+              {{ "{:,.2f}".format(metrics.kpis.current_credit_to_risk_pct) }}%
+              <span class="text-xs font-normal text-slate-400 ml-1.5 font-sans">
+                (${{ "{:,.2f}".format(metrics.kpis.total_premium_at_risk) }} open credit on ${{ "{:,.2f}".format(metrics.kpis.current_risk) }} open risk)
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="text-xs text-slate-400 md:text-right">
+        <span class="inline-block px-2.5 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300 font-medium">
+          Yield on Capital Committed
+        </span>
+      </div>
+    </div>
   </div>
 
 </div>
