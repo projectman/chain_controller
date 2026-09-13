@@ -197,6 +197,9 @@ class ShortPutsAnalyzer:
         current_roi = annualized_roi_series[-1] if annualized_roi_series else 0.0
         avg_risk_overall = (accum_daily_risk / len(dates_series)) if dates_series else 0.0
 
+        total_premium_received = sum(p["net_credit"] for p in positions)
+        total_premium_at_risk = sum(p["net_credit"] for p in positions if p["active"])
+
         return {
             "initial_date": initial_date,
             "end_date": end_dt.strftime("%Y-%m-%d"),
@@ -206,6 +209,8 @@ class ShortPutsAnalyzer:
                 "active_positions": active_count,
                 "closed_positions": closed_count,
                 "current_risk": current_risk,
+                "total_premium_at_risk": round(total_premium_at_risk, 2),
+                "total_premium_received": round(total_premium_received, 2),
                 "total_realized_profit": total_profit,
                 "current_annualized_roi": current_roi,
                 "average_risk": round(avg_risk_overall, 2)

@@ -52,50 +52,72 @@
   </div>
 
   <!-- KPI Summary Cards -->
-  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3.5">
     <!-- Card 1: Total Positions -->
-    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-5 shadow-lg">
-      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Qualifying Positions</span>
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-4 shadow-lg flex flex-col justify-between">
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Positions</span>
       <div class="text-2xl font-bold text-white mt-1">
         {{ metrics.kpis.total_positions }}
       </div>
-      <div class="text-xs text-slate-400 mt-1.5 flex items-center gap-2">
-        <span class="text-emerald-400 font-medium">● {{ metrics.kpis.active_positions }} Active</span>
+      <div class="text-xs text-slate-400 mt-1.5 flex items-center gap-1.5">
+        <span class="text-emerald-400 font-medium">● {{ metrics.kpis.active_positions }} Open</span>
         <span class="text-slate-500">&bull;</span>
         <span class="text-slate-400 font-medium">● {{ metrics.kpis.closed_positions }} Closed</span>
       </div>
     </div>
 
     <!-- Card 2: Current Open Capital Risk -->
-    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-5 shadow-lg">
-      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Current Open Risk</span>
-      <div class="text-2xl font-bold text-amber-400 font-mono mt-1">
-        ${{ "{:,.2f}".format(metrics.kpis.current_risk) }}
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-4 shadow-lg flex flex-col justify-between">
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Capital at Risk</span>
+      <div class="text-xl font-bold text-amber-400 font-mono mt-1">
+        ${{ "{:,.0f}".format(metrics.kpis.current_risk) }}
       </div>
       <div class="text-xs text-slate-400 mt-1.5">
-        Avg Daily Risk: <span class="font-mono text-slate-300">${{ "{:,.2f}".format(metrics.kpis.average_risk) }}</span>
+        Avg: <span class="font-mono text-slate-300">${{ "{:,.0f}".format(metrics.kpis.average_risk) }}</span>
       </div>
     </div>
 
-    <!-- Card 3: Total Realized Profit -->
-    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-5 shadow-lg">
-      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Cumulative Realized Profit</span>
-      <div class="text-2xl font-bold font-mono mt-1 {% if metrics.kpis.total_realized_profit >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+    <!-- Card 3: Total Premium at Risk (Open) -->
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-4 shadow-lg flex flex-col justify-between">
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Premium at Risk</span>
+      <div class="text-xl font-bold text-amber-300 font-mono mt-1">
+        ${{ "{:,.2f}".format(metrics.kpis.total_premium_at_risk) }}
+      </div>
+      <div class="text-xs text-slate-400 mt-1.5">
+        On {{ metrics.kpis.active_positions }} active positions
+      </div>
+    </div>
+
+    <!-- Card 4: Total Premium Received (All) -->
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-4 shadow-lg flex flex-col justify-between">
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Premium Received</span>
+      <div class="text-xl font-bold text-cyan-300 font-mono mt-1">
+        ${{ "{:,.2f}".format(metrics.kpis.total_premium_received) }}
+      </div>
+      <div class="text-xs text-slate-400 mt-1.5">
+        All {{ metrics.kpis.total_positions }} positions collected
+      </div>
+    </div>
+
+    <!-- Card 5: Total Realized Profit -->
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-4 shadow-lg flex flex-col justify-between">
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Realized Profit</span>
+      <div class="text-xl font-bold font-mono mt-1 {% if metrics.kpis.total_realized_profit >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
         {% if metrics.kpis.total_realized_profit >= 0 %}+{% endif %}${{ "{:,.2f}".format(metrics.kpis.total_realized_profit) }}
       </div>
       <div class="text-xs text-slate-400 mt-1.5">
-        Net realized from closed positions
+        From {{ metrics.kpis.closed_positions }} closed strategies
       </div>
     </div>
 
-    <!-- Card 4: Annualized Return on Risk -->
-    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-5 shadow-lg">
-      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Annualized Return (ROI)</span>
-      <div class="text-2xl font-bold font-mono mt-1 {% if metrics.kpis.current_annualized_roi >= 0 %}text-indigo-400{% else %}text-rose-400{% endif %}">
+    <!-- Card 6: Annualized Return on Risk -->
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-4 shadow-lg flex flex-col justify-between">
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Annualized ROI</span>
+      <div class="text-xl font-bold font-mono mt-1 {% if metrics.kpis.current_annualized_roi >= 0 %}text-indigo-400{% else %}text-rose-400{% endif %}">
         {{ "{:,.2f}".format(metrics.kpis.current_annualized_roi) }}%
       </div>
       <div class="text-xs text-slate-400 mt-1.5">
-        Normalized over {{ metrics.total_days }} days
+        Over {{ metrics.total_days }} days
       </div>
     </div>
   </div>
@@ -277,6 +299,31 @@
           {% endfor %}
 
         </tbody>
+        {% if positions %}
+        <tfoot class="bg-slate-900/90 border-t-2 border-slate-700 text-xs font-bold text-slate-200">
+          <tr>
+            <td colspan="7" class="px-3 py-3.5 text-slate-400 uppercase tracking-wider">
+              Total for Selection ({{ positions|length }} Positions)
+            </td>
+            <td class="px-3 py-3.5 text-center text-white font-bold">
+              {{ positions | map(attribute='contracts') | sum }}
+            </td>
+            <td colspan="2" class="px-3 py-3.5"></td>
+            <td class="px-3 py-3.5 text-right font-mono text-amber-400 text-xs font-bold">
+              ${{ "{:,.2f}".format(positions | map(attribute='risk') | sum) }}
+            </td>
+            <td class="px-3 py-3.5 text-right font-mono text-cyan-300 text-xs font-bold">
+              ${{ "{:,.2f}".format(positions | map(attribute='net_credit') | sum) }}
+            </td>
+            <td class="px-3 py-3.5 text-right font-mono text-xs font-bold">
+              {% set total_realized = positions | map(attribute='realized_profit') | sum %}
+              <span class="{% if total_realized >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                {% if total_realized >= 0 %}+{% endif %}${{ "{:,.2f}".format(total_realized) }}
+              </span>
+            </td>
+          </tr>
+        </tfoot>
+        {% endif %}
       </table>
     </div>
   </div>

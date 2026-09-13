@@ -63,6 +63,10 @@ def test_short_puts_analyzer_classification_and_metrics(tmp_path):
     assert metrics["kpis"]["total_positions"] == 3
     assert metrics["kpis"]["active_positions"] == 1
     assert metrics["kpis"]["closed_positions"] == 2
+    assert "total_premium_at_risk" in metrics["kpis"]
+    assert "total_premium_received" in metrics["kpis"]
+    assert metrics["kpis"]["total_premium_at_risk"] == 450.0  # LOW (1 contract @ 4.50 * 100)
+    assert metrics["kpis"]["total_premium_received"] > 0
     assert len(metrics["charts"]["labels"]) > 40
     assert len(metrics["charts"]["risk_series"]) == len(metrics["charts"]["labels"])
     assert len(metrics["charts"]["profit_series"]) == len(metrics["charts"]["labels"])
