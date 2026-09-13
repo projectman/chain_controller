@@ -1,0 +1,449 @@
+{% extends "base.html" %}
+
+{% block title %}Short Puts Analyzer - Options Chain Controller{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- Header & Date Controls -->
+  <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl p-6 shadow-xl flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+    <div>
+      <h1 class="text-2xl font-bold text-white flex items-center gap-2.5">
+        <span class="text-indigo-400">📉</span> Short Puts & Credit Puts Analyzer
+      </h1>
+      <p class="text-sm text-slate-400 mt-1">
+        Tracks daily capital risk, cumulative realized profit, and annualized return for all 
+        <strong class="text-slate-300">Short Put</strong> and <strong class="text-slate-300">Credit Short Puts Spread</strong> strategies.
+      </p>
+    </div>
+
+    <!-- Initial Date Picker Form & Presets -->
+    <div class="bg-slate-900/90 border border-slate-700/70 p-3 rounded-xl flex flex-col sm:flex-row items-center gap-3">
+      <form method="GET" action="/short-puts" class="flex items-center gap-2" id="dateForm">
+        <label for="initial_date" class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+          Initial Date:
+        </label>
+        <input 
+          type="date" 
+          id="initial_date" 
+          name="initial_date" 
+          value="{{ initial_date }}" 
+          class="bg-slate-800 border border-slate-600 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+          onchange="document.getElementById('dateForm').submit();"
+        >
+      </form>
+
+      <div class="flex items-center gap-1 border-t sm:border-t-0 sm:border-l border-slate-700 pt-2 sm:pt-0 sm:pl-3">
+        <button onclick="setInitialDate('{{ earliest_date }}')" class="px-2 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition">
+          Earliest
+        </button>
+        <button onclick="setDaysAgo(30)" class="px-2 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition">
+          30D
+        </button>
+        <button onclick="setDaysAgo(60)" class="px-2 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition">
+          60D
+        </button>
+        <button onclick="setDaysAgo(90)" class="px-2 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition">
+          90D
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- KPI Summary Cards -->
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <!-- Card 1: Total Positions -->
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-5 shadow-lg">
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Qualifying Positions</span>
+      <div class="text-2xl font-bold text-white mt-1">
+        {{ metrics.kpis.total_positions }}
+      </div>
+      <div class="text-xs text-slate-400 mt-1.5 flex items-center gap-2">
+        <span class="text-emerald-400 font-medium">● {{ metrics.kpis.active_positions }} Active</span>
+        <span class="text-slate-500">&bull;</span>
+        <span class="text-slate-400 font-medium">● {{ metrics.kpis.closed_positions }} Closed</span>
+      </div>
+    </div>
+
+    <!-- Card 2: Current Open Capital Risk -->
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-5 shadow-lg">
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Current Open Risk</span>
+      <div class="text-2xl font-bold text-amber-400 font-mono mt-1">
+        ${{ "{:,.2f}".format(metrics.kpis.current_risk) }}
+      </div>
+      <div class="text-xs text-slate-400 mt-1.5">
+        Avg Daily Risk: <span class="font-mono text-slate-300">${{ "{:,.2f}".format(metrics.kpis.average_risk) }}</span>
+      </div>
+    </div>
+
+    <!-- Card 3: Total Realized Profit -->
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-5 shadow-lg">
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Cumulative Realized Profit</span>
+      <div class="text-2xl font-bold font-mono mt-1 {% if metrics.kpis.total_realized_profit >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+        {% if metrics.kpis.total_realized_profit >= 0 %}+{% endif %}${{ "{:,.2f}".format(metrics.kpis.total_realized_profit) }}
+      </div>
+      <div class="text-xs text-slate-400 mt-1.5">
+        Net realized from closed positions
+      </div>
+    </div>
+
+    <!-- Card 4: Annualized Return on Risk -->
+    <div class="bg-slate-800/80 border border-slate-700/70 rounded-xl p-5 shadow-lg">
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Annualized Return (ROI)</span>
+      <div class="text-2xl font-bold font-mono mt-1 {% if metrics.kpis.current_annualized_roi >= 0 %}text-indigo-400{% else %}text-rose-400{% endif %}">
+        {{ "{:,.2f}".format(metrics.kpis.current_annualized_roi) }}%
+      </div>
+      <div class="text-xs text-slate-400 mt-1.5">
+        Normalized over {{ metrics.total_days }} days
+      </div>
+    </div>
+  </div>
+
+  <!-- 3 Performance & Risk Graphs -->
+  <div class="space-y-6">
+    
+    <!-- Graph 1: Total Daily Risk Exposure -->
+    <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl p-5 shadow-xl">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <span>🛡️</span> Graph 1: Total Daily Risk Exposure ($)
+          </h2>
+          <p class="text-xs text-slate-400 mt-0.5">
+            Sum of capital at risk across all actively open short put & credit put spread positions for each day.
+          </p>
+        </div>
+        <span class="px-2.5 py-1 rounded bg-amber-500/10 text-amber-400 text-xs font-mono font-semibold border border-amber-500/20">
+          Peak: ${{ "{:,.0f}".format(metrics.charts.risk_series | max if metrics.charts.risk_series else 0) }}
+        </span>
+      </div>
+      <div class="h-64 sm:h-72 w-full">
+        <canvas id="riskChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Graph 2: Integrated (Cumulative) Realized Profit -->
+    <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl p-5 shadow-xl">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <span>💰</span> Graph 2: Integrated Realized Profit ($)
+          </h2>
+          <p class="text-xs text-slate-400 mt-0.5">
+            Rolling cumulative sum of realized profit for all qualifying strategies closed on or before each date.
+          </p>
+        </div>
+        <span class="px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-400 text-xs font-mono font-semibold border border-emerald-500/20">
+          Total: ${{ "{:,.2f}".format(metrics.kpis.total_realized_profit) }}
+        </span>
+      </div>
+      <div class="h-64 sm:h-72 w-full">
+        <canvas id="profitChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Graph 3: Relative Profit by Year (Annualized Return %) -->
+    <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl p-5 shadow-xl">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <span>📈</span> Graph 3: Relative Profit by Year (Annualized ROI %)
+          </h2>
+          <p class="text-xs text-slate-400 mt-0.5">
+            Integrated profit on each date divided by average risk to date, divided by elapsed days, multiplied by 365.
+          </p>
+        </div>
+        <span class="px-2.5 py-1 rounded bg-indigo-500/10 text-indigo-400 text-xs font-mono font-semibold border border-indigo-500/20">
+          Current: {{ "{:,.2f}".format(metrics.kpis.current_annualized_roi) }}%
+        </span>
+      </div>
+      <div class="h-64 sm:h-72 w-full">
+        <canvas id="roiChart"></canvas>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Positions Breakdown Table -->
+  <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl overflow-hidden shadow-xl">
+    <div class="p-4 border-b border-slate-700/80 flex items-center justify-between">
+      <div>
+        <h3 class="text-sm font-bold text-white uppercase tracking-wider">
+          Included Short Put & Credit Put Spread Positions
+        </h3>
+        <p class="text-xs text-slate-400 mt-0.5">
+          Filtered from initial date <strong class="text-slate-200">{{ initial_date }}</strong> onwards.
+        </p>
+      </div>
+      <span class="px-2.5 py-1 rounded bg-slate-700 text-slate-300 text-xs font-bold">
+        {{ positions|length }} Positions
+      </span>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-sm text-slate-300">
+        <thead class="bg-slate-900/80 text-slate-400 uppercase tracking-wider text-xs border-b border-slate-700/80">
+          <tr>
+            <th class="px-3 py-3.5">ID</th>
+            <th class="px-3 py-3.5">Status</th>
+            <th class="px-3 py-3.5">Symbol</th>
+            <th class="px-3 py-3.5">Strategy Name</th>
+            <th class="px-3 py-3.5">Type</th>
+            <th class="px-3 py-3.5">Strikes</th>
+            <th class="px-3 py-3.5">Expiration</th>
+            <th class="px-3 py-3.5 text-center">Contracts</th>
+            <th class="px-3 py-3.5">Opened</th>
+            <th class="px-3 py-3.5">Closed</th>
+            <th class="px-3 py-3.5 text-right">Capital at Risk</th>
+            <th class="px-3 py-3.5 text-right">Premium Received</th>
+            <th class="px-3 py-3.5 text-right">Realized Profit</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-700/50">
+          {% if not positions %}
+          <tr>
+            <td colspan="13" class="px-6 py-12 text-center text-slate-400">
+              No qualifying Short Put or Credit Put Spread positions found on or after {{ initial_date }}.
+            </td>
+          </tr>
+          {% endif %}
+
+          {% for p in positions %}
+          <tr class="hover:bg-slate-700/30 transition">
+            <td class="px-3 py-3 font-mono text-xs text-slate-400">#{{ p.id }}</td>
+            <td class="px-3 py-3">
+              {% if p.active %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                ACTIVE
+              </span>
+              {% else %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-600/30 text-slate-400 border border-slate-600/50">
+                CLOSED
+              </span>
+              {% endif %}
+            </td>
+            <td class="px-3 py-3 font-bold text-white text-base">{{ p.symbol }}</td>
+            <td class="px-3 py-3 font-medium text-xs text-slate-200">
+              {{ p.name }}
+            </td>
+            <td class="px-3 py-3">
+              {% if p.strategy_type == 'Short Put' %}
+              <span class="px-2 py-0.5 rounded text-xs font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                Short Put
+              </span>
+              {% else %}
+              <span class="px-2 py-0.5 rounded text-xs font-semibold bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                Credit Put Spread
+              </span>
+              {% endif %}
+            </td>
+            <td class="px-3 py-3 font-mono text-xs text-white font-bold">{{ p.strikes }}</td>
+            <td class="px-3 py-3 font-mono text-xs text-slate-400">{{ p.expiration_date or '-' }}</td>
+            <td class="px-3 py-3 text-center font-bold text-xs">{{ p.contracts }}</td>
+            <td class="px-3 py-3 font-mono text-xs text-slate-400">{{ p.opened_date }}</td>
+            <td class="px-3 py-3 font-mono text-xs text-slate-400">
+              {% if p.active %}<span class="text-emerald-400 font-medium">Open</span>{% else %}{{ p.closed_date or '-' }}{% endif %}
+            </td>
+            <td class="px-3 py-3 text-right font-mono font-bold text-amber-400 text-xs">
+              ${{ "{:,.2f}".format(p.risk) }}
+            </td>
+            <td class="px-3 py-3 text-right font-mono text-xs text-slate-300">
+              ${{ "{:,.2f}".format(p.net_credit) }}
+            </td>
+            <td class="px-3 py-3 text-right font-mono font-bold text-xs">
+              {% if not p.active %}
+                <span class="{% if p.realized_profit >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                  {% if p.realized_profit >= 0 %}+{% endif %}${{ "{:,.2f}".format(p.realized_profit) }}
+                </span>
+              {% else %}
+                <span class="text-slate-500 font-normal">Active (Unrealized)</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function setInitialDate(dateStr) {
+  const input = document.getElementById("initial_date");
+  input.value = dateStr;
+  document.getElementById("dateForm").submit();
+}
+
+function setDaysAgo(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  const dateStr = d.toISOString().split("T")[0];
+  setInitialDate(dateStr);
+}
+
+// Chart.js Setup
+document.addEventListener("DOMContentLoaded", function() {
+  const labels = {{ metrics.charts.labels | tojson }};
+  const riskData = {{ metrics.charts.risk_series | tojson }};
+  const profitData = {{ metrics.charts.profit_series | tojson }};
+  const roiData = {{ metrics.charts.annualized_roi_series | tojson }};
+
+  const chartDefaults = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: '#1e293b',
+        titleColor: '#cbd5e1',
+        bodyColor: '#f8fafc',
+        borderColor: '#475569',
+        borderWidth: 1,
+        padding: 10
+      }
+    },
+    scales: {
+      x: {
+        grid: { color: 'rgba(51, 65, 85, 0.4)' },
+        ticks: { color: '#94a3b8', font: { size: 10 } }
+      },
+      y: {
+        grid: { color: 'rgba(51, 65, 85, 0.4)' },
+        ticks: { color: '#94a3b8', font: { size: 10 } }
+      }
+    }
+  };
+
+  // 1. Risk Chart
+  const ctxRisk = document.getElementById('riskChart').getContext('2d');
+  new Chart(ctxRisk, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Total Capital at Risk ($)',
+        data: riskData,
+        borderColor: '#fbbf24',
+        backgroundColor: 'rgba(251, 191, 36, 0.1)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.1,
+        pointRadius: 2,
+        pointHoverRadius: 5
+      }]
+    },
+    options: {
+      ...chartDefaults,
+      plugins: {
+        ...chartDefaults.plugins,
+        tooltip: {
+          ...chartDefaults.plugins.tooltip,
+          callbacks: {
+            label: (ctx) => ` Capital at Risk: $${Number(ctx.raw).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+          }
+        }
+      },
+      scales: {
+        ...chartDefaults.scales,
+        y: {
+          ...chartDefaults.scales.y,
+          ticks: {
+            color: '#94a3b8',
+            callback: (val) => '$' + Number(val).toLocaleString('en-US')
+          }
+        }
+      }
+    }
+  });
+
+  // 2. Profit Chart
+  const ctxProfit = document.getElementById('profitChart').getContext('2d');
+  new Chart(ctxProfit, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Integrated Realized Profit ($)',
+        data: profitData,
+        borderColor: '#10b981',
+        backgroundColor: 'rgba(16, 185, 129, 0.12)',
+        borderWidth: 2.5,
+        fill: true,
+        tension: 0.15,
+        pointRadius: 2,
+        pointHoverRadius: 5
+      }]
+    },
+    options: {
+      ...chartDefaults,
+      plugins: {
+        ...chartDefaults.plugins,
+        tooltip: {
+          ...chartDefaults.plugins.tooltip,
+          callbacks: {
+            label: (ctx) => ` Realized Profit: $${Number(ctx.raw).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+          }
+        }
+      },
+      scales: {
+        ...chartDefaults.scales,
+        y: {
+          ...chartDefaults.scales.y,
+          ticks: {
+            color: '#94a3b8',
+            callback: (val) => '$' + Number(val).toLocaleString('en-US')
+          }
+        }
+      }
+    }
+  });
+
+  // 3. Annualized ROI Chart
+  const ctxRoi = document.getElementById('roiChart').getContext('2d');
+  new Chart(ctxRoi, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Annualized ROI (%)',
+        data: roiData,
+        borderColor: '#818cf8',
+        backgroundColor: 'rgba(129, 140, 248, 0.12)',
+        borderWidth: 2.5,
+        fill: true,
+        tension: 0.2,
+        pointRadius: 2,
+        pointHoverRadius: 5
+      }]
+    },
+    options: {
+      ...chartDefaults,
+      plugins: {
+        ...chartDefaults.plugins,
+        tooltip: {
+          ...chartDefaults.plugins.tooltip,
+          callbacks: {
+            label: (ctx) => ` Annualized Return: ${Number(ctx.raw).toFixed(2)}%`
+          }
+        }
+      },
+      scales: {
+        ...chartDefaults.scales,
+        y: {
+          ...chartDefaults.scales.y,
+          ticks: {
+            color: '#94a3b8',
+            callback: (val) => Number(val).toFixed(1) + '%'
+          }
+        }
+      }
+    }
+  });
+
+});
+</script>
+{% endblock %}

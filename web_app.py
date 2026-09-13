@@ -7,6 +7,7 @@ from options_chain.storage import ChainStorage
 from options_chain.models import OptionsChain, OptionLeg
 from options_chain.calculator import ChainCalculator
 from options_chain.activity_parser import ActivityParser
+from options_chain.short_puts_analyzer import ShortPutsAnalyzer
 
 
 def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources") -> Flask:
@@ -210,6 +211,39 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
             },
             chains=formatted_chains
         )
+
+    @app.route("/short-puts")
+    def short_puts_page():
+        earliest_date = ShortPutsAnalyzer.get_earliest_qualifying_date(storage)
+        initial_date = request.args.get("initial_date", earliest_date)
+        if not initial_date:
+            initial_date = earliest_date
+
+        positions = ShortPutsAnalyzer.find_qualifying_positions(storage, initial_date=initial_date)
+        metrics = ShortPutsAnalyzer.compute_daily_metrics(positions, initial_date=initial_date)
+
+        return render_template(
+            "short_puts_analyzer.html",
+            active_page="short_puts",
+            initial_date=initial_date,
+            earliest_date=earliest_date,
+            positions=positions,
+            metrics=metrics
+        )
+
+    @app.route("/api/short-puts/data")
+    def api_short_puts_data():
+        earliest_date = ShortPutsAnalyzer.get_earliest_qualifying_date(storage)
+        initial_date = request.args.get("initial_date", earliest_date)
+        if not initial_date:
+            initial_date = earliest_date
+
+        positions = ShortPutsAnalyzer.find_qualifying_positions(storage, initial_date=initial_date)
+        metrics = ShortPutsAnalyzer.compute_daily_metrics(positions, initial_date=initial_date)
+        return jsonify({
+            "positions": positions,
+            "metrics": metrics
+        })
 
     return app
 

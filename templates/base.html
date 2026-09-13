@@ -24,6 +24,8 @@
       }
     }
   </script>
+  <!-- Chart.js via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="h-full flex flex-col antialiased selection:bg-indigo-500 selection:text-white">
 
@@ -39,17 +41,20 @@
           </div>
           <div>
             <span class="font-bold text-lg tracking-tight text-white">Chain Controller</span>
-            <span class="text-xs ml-1.5 px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 font-mono">v1.2</span>
+            <span class="text-xs ml-1.5 px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 font-mono">v1.3</span>
           </div>
         </div>
 
         <!-- Navigation Tabs -->
         <nav class="flex space-x-1 sm:space-x-2">
-          <a href="/import" class="px-3.5 py-2 rounded-md text-sm font-medium transition-colors {% if active_page == 'import' %}bg-indigo-600 text-white shadow-sm shadow-indigo-500/30{% else %}text-slate-300 hover:bg-slate-700/70 hover:text-white{% endif %}">
+          <a href="/import" class="px-3 py-2 rounded-md text-sm font-medium transition-colors {% if active_page == 'import' %}bg-indigo-600 text-white shadow-sm shadow-indigo-500/30{% else %}text-slate-300 hover:bg-slate-700/70 hover:text-white{% endif %}">
             📥 Import Report
           </a>
-          <a href="/chains" class="px-3.5 py-2 rounded-md text-sm font-medium transition-colors {% if active_page == 'chains' %}bg-indigo-600 text-white shadow-sm shadow-indigo-500/30{% else %}text-slate-300 hover:bg-slate-700/70 hover:text-white{% endif %}">
-            📋 Current Positions List
+          <a href="/chains" class="px-3 py-2 rounded-md text-sm font-medium transition-colors {% if active_page == 'chains' %}bg-indigo-600 text-white shadow-sm shadow-indigo-500/30{% else %}text-slate-300 hover:bg-slate-700/70 hover:text-white{% endif %}">
+            📋 Positions & Chains
+          </a>
+          <a href="/short-puts" class="px-3 py-2 rounded-md text-sm font-medium transition-colors {% if active_page == 'short_puts' %}bg-indigo-600 text-white shadow-sm shadow-indigo-500/30{% else %}text-slate-300 hover:bg-slate-700/70 hover:text-white{% endif %}">
+            📉 Short Puts Analyzer
           </a>
         </nav>
       </div>
