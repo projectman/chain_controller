@@ -36,7 +36,10 @@ class ShortPutsAnalyzer:
         qualifying: List[Dict[str, Any]] = []
 
         for chain in all_chains:
-            if initial_date and chain.opened_date < initial_date:
+            # Only exclude positions that were already closed BEFORE initial_date.
+            # Any position that was active on or after initial_date (even if opened earlier) is included,
+            # ensuring that already-open positions on Day 1 have their true risk counted!
+            if initial_date and not chain.active and chain.closed_date and chain.closed_date < initial_date:
                 continue
 
             # Check put legs
@@ -209,10 +212,10 @@ class ShortPutsAnalyzer:
             day_risk = sum(p["risk"] for p in open_pos)
             risk_series.append(round(day_risk, 2))
 
-            # Positions closed on or before curr_str
+            # Positions closed on or before curr_str (and closed within this evaluation window)
             closed_pos = [
                 p for p in positions
-                if not p["active"] and p["closed_date"] and p["closed_date"] <= curr_str
+                if not p["active"] and p["closed_date"] and initial_date <= p["closed_date"] <= curr_str
             ]
             integrated_profit = sum(p["realized_profit"] for p in closed_pos)
             profit_series.append(round(integrated_profit, 2))

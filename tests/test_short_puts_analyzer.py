@@ -138,3 +138,54 @@ def test_short_puts_web_endpoints(tmp_path):
         assert "positions" in data
         assert len(data["positions"]) == 1
         assert data["positions"][0]["name"] == "TGT 2026-07-07 Short Put"
+
+
+def test_already_open_positions_included_on_initial_date(tmp_path):
+    """Verifies that positions opened prior to initial_date but still open on initial_date
+    have their risk counted on Day 1 of the evaluation period, and are not 0 risk."""
+    db_file = str(tmp_path / "test_initial_date_risk.db")
+    storage = ChainStorage(db_path=db_file)
+
+    # Position 1: Opened on Aug 01, closed on Aug 10 (already closed BEFORE evaluation window)
+    c1 = OptionsChain(symbol="CLOSED_EARLY", name="CLOSED_EARLY 2026-08-01 Strategy", active=False, opened_date="2026-08-01", closed_date="2026-08-10")
+    c1.add_leg(OptionLeg(strike=100.0, option_type=OptionType.PUT, side=OptionSide.SELL, quantity=1, entry_price=2.0, action="SELL_TO_OPEN", trade_date="2026-08-01", expiration_date="2026-09-18"))
+    c1.add_leg(OptionLeg(strike=100.0, option_type=OptionType.PUT, side=OptionSide.BUY, quantity=1, entry_price=1.0, action="BUY_TO_CLOSE", trade_date="2026-08-10", expiration_date="2026-09-18"))
+    storage.save_chain(c1)
+
+    # Position 2: Opened on Aug 05, STILL ACTIVE during evaluation window
+    c2 = OptionsChain(symbol="OPEN_PREV", name="OPEN_PREV 2026-08-05 Strategy", active=True, opened_date="2026-08-05")
+    c2.add_leg(OptionLeg(strike=200.0, option_type=OptionType.PUT, side=OptionSide.SELL, quantity=1, entry_price=5.0, action="SELL_TO_OPEN", trade_date="2026-08-05", expiration_date="2026-10-16"))
+    storage.save_chain(c2)
+
+    # Position 3: Opened on Aug 15, closed on Aug 25 (closed DURING evaluation window)
+    c3 = OptionsChain(symbol="CLOSED_DURING", name="CLOSED_DURING 2026-08-15 Strategy", active=False, opened_date="2026-08-15", closed_date="2026-08-25")
+    c3.add_leg(OptionLeg(strike=150.0, option_type=OptionType.PUT, side=OptionSide.SELL, quantity=1, entry_price=3.0, action="SELL_TO_OPEN", trade_date="2026-08-15", expiration_date="2026-09-18"))
+    c3.add_leg(OptionLeg(strike=150.0, option_type=OptionType.PUT, side=OptionSide.BUY, quantity=1, entry_price=1.0, action="BUY_TO_CLOSE", trade_date="2026-08-25", expiration_date="2026-09-18"))
+    storage.save_chain(c3)
+
+    # Evaluate for 30D window starting on Aug 20
+    eval_date = "2026-08-20"
+    positions = ShortPutsAnalyzer.find_qualifying_positions(storage, initial_date=eval_date)
+
+    # CLOSED_EARLY (closed Aug 10) must be excluded
+    # OPEN_PREV and CLOSED_DURING must be included
+    syms = [p["symbol"] for p in positions]
+    assert "CLOSED_EARLY" not in syms
+    assert "OPEN_PREV" in syms
+    assert "CLOSED_DURING" in syms
+
+    metrics = ShortPutsAnalyzer.compute_daily_metrics(positions, initial_date=eval_date, end_date="2026-08-31")
+
+    # On Day 1 (Aug 20), BOTH OPEN_PREV ($20k) and CLOSED_DURING ($15k) are open!
+    # Day 1 risk MUST be $35,000, NOT $0!
+    assert metrics["charts"]["labels"][0] == "2026-08-20"
+    day1_risk = metrics["charts"]["risk_series"][0]
+    assert day1_risk == 35000.0  # 200*100 + 150*100
+
+    # On Aug 26 (after CLOSED_DURING closed on Aug 25), risk drops to $20k
+    idx_aug26 = metrics["charts"]["labels"].index("2026-08-26")
+    assert metrics["charts"]["risk_series"][idx_aug26] == 20000.0
+
+    # Realized profit on Day 1 is $0, and becomes $200 on Aug 25 when CLOSED_DURING closes
+    assert metrics["charts"]["profit_series"][0] == 0.0
+    assert metrics["charts"]["profit_series"][idx_aug26] == 200.0
