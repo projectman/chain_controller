@@ -65,12 +65,20 @@ def test_parse_fidelity_activity_csv():
     assert pytest.approx(ibm_chain.net_initial_cost, 0.01) == -198.68
 
 
+SAMPLE_CSV_CONTENT = """Date,Activity Description,Symbol,Quantity,Price,Amount,Cash Balance,Description,Commission,Fees,Account
+Jul-14-2026,YOU SOLD OPENING TRANSACTION,IBM260724P200,-1,3.80,379.34,"+10,000.00",PUT (IBM) INTL BUSINESS 200,0.65,0.01,Acct 1
+Jul-16-2026,YOU BOUGHT CLOSING TRANSACTION,IBM260724P200,1,1.80,-180.66,"+9,819.34",PUT (IBM) INTL BUSINESS 200,0.65,0.01,Acct 1
+"""
+
+
 def test_import_sources_to_sqlite(tmp_path):
     db_file = str(tmp_path / "test_sources.db")
     storage = ChainStorage(db_path=db_file)
-    sources_dir = os.path.join(os.path.dirname(__file__), "..", "sources")
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir()
+    (sources_dir / "Activity_Sample.csv").write_text(SAMPLE_CSV_CONTENT)
 
-    res = ActivityParser.import_sources_folder(sources_dir=sources_dir, storage=storage)
+    res = ActivityParser.import_sources_folder(sources_dir=str(sources_dir), storage=storage)
     assert res["processed_files"] >= 1
     assert res["new_legs"] >= 2
 
@@ -85,16 +93,18 @@ def test_import_sources_to_sqlite(tmp_path):
 def test_import_deduplication(tmp_path):
     db_file = str(tmp_path / "test_dedup.db")
     storage = ChainStorage(db_path=db_file)
-    sources_dir = os.path.join(os.path.dirname(__file__), "..", "sources")
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir()
+    (sources_dir / "Activity_Sample.csv").write_text(SAMPLE_CSV_CONTENT)
 
     # Run 1: Should import all new legs from sources
-    res1 = ActivityParser.import_sources_folder(sources_dir=sources_dir, storage=storage)
+    res1 = ActivityParser.import_sources_folder(sources_dir=str(sources_dir), storage=storage)
     initial_legs = res1["new_legs"]
     assert initial_legs >= 2
     assert res1["skipped_duplicates"] == 0
 
     # Run 2: Re-import same folder. Should skip all legs as duplicates!
-    res2 = ActivityParser.import_sources_folder(sources_dir=sources_dir, storage=storage)
+    res2 = ActivityParser.import_sources_folder(sources_dir=str(sources_dir), storage=storage)
     assert res2["new_legs"] == 0
     assert res2["skipped_duplicates"] == initial_legs
 

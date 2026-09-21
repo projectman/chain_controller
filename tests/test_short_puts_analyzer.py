@@ -35,9 +35,18 @@ def test_short_puts_analyzer_classification_and_metrics(tmp_path):
     c4.add_leg(OptionLeg(strike=220.0, option_type=OptionType.CALL, side=OptionSide.BUY, quantity=1, entry_price=5.0, action="BUY_TO_OPEN", trade_date="2026-08-20", expiration_date="2026-09-18"))
     storage.save_chain(c4)
 
+    # 5. Diagonal Credit Spread: NKE Long Put Aug 21, Short Put Aug 26 (different strikes & different expirations)
+    c5 = OptionsChain(symbol="NKE", name="NKE 2026-08-21 Strategy", active=True, opened_date="2026-08-21")
+    c5.add_leg(OptionLeg(strike=25.0, option_type=OptionType.PUT, side=OptionSide.BUY, quantity=2, entry_price=1.00, action="BUY_TO_OPEN", trade_date="2026-08-21", expiration_date="2026-10-16", occ_symbol="NKE261016P25"))
+    storage.save_chain(c5)
+
+    c6 = OptionsChain(symbol="NKE", name="NKE 2026-08-26 Strategy", active=True, opened_date="2026-08-26")
+    c6.add_leg(OptionLeg(strike=37.5, option_type=OptionType.PUT, side=OptionSide.SELL, quantity=2, entry_price=2.50, action="SELL_TO_OPEN", trade_date="2026-08-26", expiration_date="2026-11-20", occ_symbol="NKE261120P37.5"))
+    storage.save_chain(c6)
+
     # Test qualifying positions
     positions = ShortPutsAnalyzer.find_qualifying_positions(storage, initial_date="2026-07-01")
-    assert len(positions) == 3
+    assert len(positions) == 4
 
     # Check classification and naming
     ibm_pos = next(p for p in positions if p["symbol"] == "IBM")
@@ -58,14 +67,20 @@ def test_short_puts_analyzer_classification_and_metrics(tmp_path):
     assert low_pos["strategy_type"] == "Short Put"
     assert low_pos["active"] is True
 
+    nke_pos = next(p for p in positions if p["symbol"] == "NKE")
+    assert nke_pos["strategy_type"] == "Diagonal Credit Spread"
+    assert nke_pos["name"] == "NKE 2026-08-26 Diagonal Credit Spread"
+    assert nke_pos["risk"] == (37.5 - 25.0) * 2 * 100.0  # $2,500 spread width
+    assert nke_pos["active"] is True
+
     # Test daily metrics simulation
     metrics = ShortPutsAnalyzer.compute_daily_metrics(positions, initial_date="2026-07-14", end_date="2026-09-01")
-    assert metrics["kpis"]["total_positions"] == 3
-    assert metrics["kpis"]["active_positions"] == 1
+    assert metrics["kpis"]["total_positions"] == 4
+    assert metrics["kpis"]["active_positions"] == 2
     assert metrics["kpis"]["closed_positions"] == 2
     assert "total_premium_at_risk" in metrics["kpis"]
     assert "total_premium_received" in metrics["kpis"]
-    assert metrics["kpis"]["total_premium_at_risk"] == 450.0  # LOW (1 contract @ 4.50 * 100)
+    assert metrics["kpis"]["total_premium_at_risk"] == 450.0 + 500.0  # LOW ($450) + NKE ($500)
     assert metrics["kpis"]["total_premium_received"] > 0
     assert len(metrics["charts"]["labels"]) > 40
     assert len(metrics["charts"]["risk_series"]) == len(metrics["charts"]["labels"])

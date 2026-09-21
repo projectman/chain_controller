@@ -21,13 +21,21 @@ class ShortPutsAnalyzer:
         If initial_date is specified, only returns positions with opened_date >= initial_date.
         """
         meta_list = storage.list_chains(include_deleted=False)
+        all_chains = [storage.get_chain(meta["id"]) for meta in meta_list]
+        all_chains = [c for c in all_chains if c and c.opened_date]
+
+        # Index active long put legs across all chains by symbol to support cross-date/cross-chain pairing
+        all_active_long_puts: Dict[str, List[Tuple[OptionsChain, OptionLeg]]] = {}
+        for c in all_chains:
+            if not c.active:
+                continue
+            for l in c.legs:
+                if l.option_type == OptionType.PUT and (l.action == "BUY_TO_OPEN" or (not l.action and l.side == OptionSide.BUY)):
+                    all_active_long_puts.setdefault(c.symbol, []).append((c, l))
+
         qualifying: List[Dict[str, Any]] = []
 
-        for meta in meta_list:
-            chain = storage.get_chain(meta["id"])
-            if not chain or not chain.opened_date:
-                continue
-
+        for chain in all_chains:
             if initial_date and chain.opened_date < initial_date:
                 continue
 
@@ -40,6 +48,9 @@ class ShortPutsAnalyzer:
             short_opens = [l for l in open_puts if l.action == "SELL_TO_OPEN" or (not l.action and l.side == OptionSide.SELL)]
             long_opens = [l for l in open_puts if l.action == "BUY_TO_OPEN" or (not l.action and l.side == OptionSide.BUY)]
 
+            if not short_opens:
+                continue
+
             strat_type = None
             strat_name = None
             risk = 0.0
@@ -47,36 +58,65 @@ class ShortPutsAnalyzer:
             strikes_label = ""
             exp_date = ""
             total_contracts = 0
+            mult = short_opens[0].multiplier or 100.0
 
-            # 1. Short Put: short puts with no long opening put legs
-            if short_opens and not long_opens:
+            # 1. Vertical Credit Put Spread (Same expiration date, short strike > long strike)
+            for s in short_opens:
+                for lo in long_opens:
+                    if s.expiration_date == lo.expiration_date and s.strike > lo.strike:
+                        strat_type = "Credit Short Puts Spread"
+                        strat_name = f"{chain.symbol} {chain.opened_date} Credit Short Puts Spread"
+                        qty = min(s.quantity, lo.quantity)
+                        total_contracts = qty
+                        risk = (s.strike - lo.strike) * qty * mult
+                        net_credit = (s.entry_price - lo.entry_price) * qty * mult
+                        strikes_label = f"${s.strike:,.2f} / ${lo.strike:,.2f}"
+                        exp_date = s.expiration_date or ""
+                        break
+                if strat_type:
+                    break
+
+            # 2. Diagonal Credit Spread (Different strikes and different expiration dates)
+            if not strat_type:
+                # Check within the same chain first
+                diag_candidates = [
+                    lo for lo in long_opens 
+                    if lo.expiration_date != short_opens[0].expiration_date and lo.strike != short_opens[0].strike
+                ]
+                # If not in same chain, check across active chains in the portfolio for that underlying
+                if not diag_candidates and chain.active and chain.symbol in all_active_long_puts:
+                    diag_candidates = [
+                        l for ch, l in all_active_long_puts[chain.symbol]
+                        if ch.id != chain.id and l.expiration_date != short_opens[0].expiration_date and l.strike != short_opens[0].strike
+                    ]
+
+                if diag_candidates:
+                    s = short_opens[0]
+                    lo = diag_candidates[0]
+                    strat_type = "Diagonal Credit Spread"
+                    strat_name = f"{chain.symbol} {chain.opened_date} Diagonal Credit Spread"
+                    qty = min(s.quantity, lo.quantity)
+                    total_contracts = qty
+                    # If short strike > long strike: risk is spread width; if long strike >= short strike: downside fully protected ($0)
+                    if s.strike > lo.strike:
+                        risk = (s.strike - lo.strike) * qty * mult
+                    else:
+                        risk = 0.0
+
+                    net_credit = (s.entry_price * s.quantity * mult)
+                    strikes_label = f"${s.strike:,.2f} / ${lo.strike:,.2f}"
+                    exp_date = f"{s.expiration_date or '-'} / {lo.expiration_date or '-'}"
+
+            # 3. Pure Short Put (Unhedged / Naked / Cash-Secured)
+            if not strat_type:
                 strat_type = "Short Put"
                 strat_name = f"{chain.symbol} {chain.opened_date} Short Put"
                 total_contracts = sum(s.quantity for s in short_opens)
                 exp_date = short_opens[0].expiration_date or ""
                 strikes_label = ", ".join(f"${s.strike:,.2f}" for s in short_opens)
                 for s in short_opens:
-                    mult = s.multiplier or 100.0
                     risk += s.strike * s.quantity * mult
                     net_credit += s.entry_price * s.quantity * mult
-
-            # 2. Credit Short Puts Spread: short put and long put with same expiration date and short strike > long strike
-            elif short_opens and long_opens:
-                for s in short_opens:
-                    for lo in long_opens:
-                        if s.expiration_date == lo.expiration_date and s.strike > lo.strike:
-                            strat_type = "Credit Short Puts Spread"
-                            strat_name = f"{chain.symbol} {chain.opened_date} Credit Short Puts Spread"
-                            qty = min(s.quantity, lo.quantity)
-                            total_contracts = qty
-                            mult = s.multiplier or 100.0
-                            risk += (s.strike - lo.strike) * qty * mult
-                            net_credit += (s.entry_price - lo.entry_price) * qty * mult
-                            strikes_label = f"${s.strike:,.2f} / ${lo.strike:,.2f}"
-                            exp_date = s.expiration_date or ""
-                            break
-                    if strat_type:
-                        break
 
             if strat_type:
                 # Realized profit for closed strategies
