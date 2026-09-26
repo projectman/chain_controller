@@ -196,7 +196,7 @@
             Running average (mean) realized annual relative profit of all qualifying positions closed on or before each date (365 &times; (Realized Profit / Capital at Risk) / Holding Days).
           </p>
         </div>
-        <span class="px-2.5 py-1 rounded bg-teal-500/10 text-teal-400 text-xs font-mono font-semibold border border-teal-500/20">
+        <span class="px-2.5 py-1 rounded bg-sky-500/10 text-sky-400 text-xs font-mono font-semibold border border-sky-500/20">
           Period Average: {{ "{:,.2f}".format(metrics.kpis.overall_avg_closed_roi) }}%
         </span>
       </div>
@@ -622,8 +622,8 @@ document.addEventListener("DOMContentLoaded", function() {
       datasets: [{
         label: 'Average Realized Annual Relative Profit (%)',
         data: closedAvgRoiData,
-        borderColor: '#14b8a6',
-        backgroundColor: 'rgba(20, 184, 166, 0.12)',
+        borderColor: '#0ea5e9',
+        backgroundColor: 'rgba(14, 165, 233, 0.15)',
         borderWidth: 2.5,
         fill: true,
         tension: 0.15,
