@@ -55,6 +55,9 @@ def test_short_puts_analyzer_classification_and_metrics(tmp_path):
     assert ibm_pos["risk"] == 200.0 * 1 * 100.0  # $20,000
     assert ibm_pos["realized_profit"] == pytest.approx((3.80 - 1.80) * 100.0)  # $200.00
     assert ibm_pos["active"] is False
+    assert ibm_pos["holding_days"] == 2  # 2026-07-16 - 2026-07-14
+    # 365 * (200 / 20000) / 2 * 100% = 182.5%
+    assert ibm_pos["annualized_profit_pct"] == 182.5
 
     wdc_pos = next(p for p in positions if p["symbol"] == "WDC")
     assert wdc_pos["strategy_type"] == "Credit Short Puts Spread"
@@ -66,6 +69,8 @@ def test_short_puts_analyzer_classification_and_metrics(tmp_path):
     low_pos = next(p for p in positions if p["symbol"] == "LOW")
     assert low_pos["strategy_type"] == "Short Put"
     assert low_pos["active"] is True
+    assert low_pos["annualized_profit_pct"] is None
+    assert low_pos["holding_days"] is None
 
     nke_pos = next(p for p in positions if p["symbol"] == "NKE")
     assert nke_pos["strategy_type"] == "Diagonal Credit Spread"
@@ -86,6 +91,9 @@ def test_short_puts_analyzer_classification_and_metrics(tmp_path):
     assert len(metrics["charts"]["risk_series"]) == len(metrics["charts"]["labels"])
     assert len(metrics["charts"]["profit_series"]) == len(metrics["charts"]["labels"])
     assert len(metrics["charts"]["annualized_roi_series"]) == len(metrics["charts"]["labels"])
+    assert len(metrics["charts"]["avg_closed_roi_series"]) == len(metrics["charts"]["labels"])
+    assert "overall_avg_closed_roi" in metrics["kpis"]
+    assert metrics["kpis"]["overall_avg_closed_roi"] > 0
 
     # On July 15, IBM was open, risk should be $20,000
     idx_july15 = metrics["charts"]["labels"].index("2026-07-15")
@@ -119,6 +127,9 @@ def test_short_puts_web_endpoints(tmp_path):
         assert "riskChart" in html
         assert "profitChart" in html
         assert "roiChart" in html
+        assert "closedAvgRoiChart" in html
+        assert "Realized Annual Relative Profit, %" in html
+        assert "Active (Unrealized)" in html
 
         # 2. Active filter
         res_active = client.get("/short-puts?initial_date=2026-07-01&status=active")

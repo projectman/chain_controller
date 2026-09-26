@@ -185,6 +185,26 @@
       </div>
     </div>
 
+    <!-- Graph 4: Average Realized Annual Relative Profit of Closed Positions (%) -->
+    <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl p-5 shadow-xl">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <span>🎯</span> Graph 4: Average Realized Annual Relative Profit of Closed Positions (%)
+          </h2>
+          <p class="text-xs text-slate-400 mt-0.5">
+            Running average (mean) realized annual relative profit of all qualifying positions closed on or before each date (365 &times; (Realized Profit / Capital at Risk) / Holding Days).
+          </p>
+        </div>
+        <span class="px-2.5 py-1 rounded bg-teal-500/10 text-teal-400 text-xs font-mono font-semibold border border-teal-500/20">
+          Period Average: {{ "{:,.2f}".format(metrics.kpis.overall_avg_closed_roi) }}%
+        </span>
+      </div>
+      <div class="h-64 sm:h-72 w-full">
+        <canvas id="closedAvgRoiChart"></canvas>
+      </div>
+    </div>
+
   </div>
 
   <!-- Positions Breakdown Table -->
@@ -233,12 +253,13 @@
             <th class="px-3 py-3.5 text-right">Capital at Risk</th>
             <th class="px-3 py-3.5 text-right">Premium Received</th>
             <th class="px-3 py-3.5 text-right">Realized Profit</th>
+            <th class="px-3 py-3.5 text-right">Realized Annual Relative Profit, %</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-700/50">
           {% if not positions %}
           <tr>
-            <td colspan="13" class="px-6 py-12 text-center text-slate-400">
+            <td colspan="14" class="px-6 py-12 text-center text-slate-400">
               No qualifying Short Put or Credit Put Spread positions found on or after {{ initial_date }}.
             </td>
           </tr>
@@ -303,6 +324,19 @@
                 <span class="text-slate-500 font-normal">Active (Unrealized)</span>
               {% endif %}
             </td>
+            <td class="px-3 py-3 text-right font-mono font-bold text-xs">
+              {% if not p.active %}
+                {% if p.annualized_profit_pct is not none %}
+                  <span class="{% if p.annualized_profit_pct >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                    {% if p.annualized_profit_pct >= 0 %}+{% endif %}{{ "{:,.2f}".format(p.annualized_profit_pct) }}%
+                  </span>
+                {% else %}
+                  <span class="text-slate-400 font-normal">-</span>
+                {% endif %}
+              {% else %}
+                <span class="text-slate-500 font-normal">Active (Unrealized)</span>
+              {% endif %}
+            </td>
           </tr>
           {% endfor %}
 
@@ -328,6 +362,23 @@
               <span class="{% if total_realized >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
                 {% if total_realized >= 0 %}+{% endif %}${{ "{:,.2f}".format(total_realized) }}
               </span>
+            </td>
+            <td class="px-3 py-3.5 text-right font-mono text-xs font-bold">
+              {% set closed_positions = positions | rejectattr('active') | list %}
+              {% set valid_rois = [] %}
+              {% for cp in closed_positions %}
+                {% if cp.annualized_profit_pct is not none %}
+                  {% set _ = valid_rois.append(cp.annualized_profit_pct) %}
+                {% endif %}
+              {% endfor %}
+              {% if valid_rois %}
+                {% set avg_sel_roi = (valid_rois | sum) / (valid_rois | length) %}
+                <span class="{% if avg_sel_roi >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                  Avg: {% if avg_sel_roi >= 0 %}+{% endif %}{{ "{:,.2f}".format(avg_sel_roi) }}%
+                </span>
+              {% else %}
+                <span class="text-slate-500 font-normal">-</span>
+              {% endif %}
             </td>
           </tr>
         </tfoot>
@@ -408,6 +459,7 @@ document.addEventListener("DOMContentLoaded", function() {
   const riskData = {{ metrics.charts.risk_series | tojson }};
   const profitData = {{ metrics.charts.profit_series | tojson }};
   const roiData = {{ metrics.charts.annualized_roi_series | tojson }};
+  const closedAvgRoiData = {{ metrics.charts.avg_closed_roi_series | tojson }};
 
   const chartDefaults = {
     responsive: true,
@@ -545,6 +597,48 @@ document.addEventListener("DOMContentLoaded", function() {
           ...chartDefaults.plugins.tooltip,
           callbacks: {
             label: (ctx) => ` Annualized Return: ${Number(ctx.raw).toFixed(2)}%`
+          }
+        }
+      },
+      scales: {
+        ...chartDefaults.scales,
+        y: {
+          ...chartDefaults.scales.y,
+          ticks: {
+            color: '#94a3b8',
+            callback: (val) => Number(val).toFixed(1) + '%'
+          }
+        }
+      }
+    }
+  });
+
+  // 4. Closed Positions Average Annualized ROI Chart
+  const ctxClosedAvgRoi = document.getElementById('closedAvgRoiChart').getContext('2d');
+  new Chart(ctxClosedAvgRoi, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Average Realized Annual Relative Profit (%)',
+        data: closedAvgRoiData,
+        borderColor: '#14b8a6',
+        backgroundColor: 'rgba(20, 184, 166, 0.12)',
+        borderWidth: 2.5,
+        fill: true,
+        tension: 0.15,
+        pointRadius: 2,
+        pointHoverRadius: 5
+      }]
+    },
+    options: {
+      ...chartDefaults,
+      plugins: {
+        ...chartDefaults.plugins,
+        tooltip: {
+          ...chartDefaults.plugins.tooltip,
+          callbacks: {
+            label: (ctx) => ` Avg Closed Annual ROI: ${Number(ctx.raw).toFixed(2)}%`
           }
         }
       },

@@ -122,11 +122,22 @@ class ShortPutsAnalyzer:
                     net_credit += s.entry_price * s.quantity * mult
 
             if strat_type:
-                # Realized profit for closed strategies
+                # Realized profit and holding period for closed strategies
                 realized_profit = 0.0
-                if not chain.active and chain.closed_date:
+                holding_days = None
+                annualized_profit_pct = None
+
+                if not chain.active and chain.closed_date and chain.opened_date:
                     # Initial cost is negative for credit received, positive for debit paid
                     realized_profit = -chain.net_initial_cost - chain.total_commissions_and_fees
+                    try:
+                        d_open = datetime.strptime(chain.opened_date, "%Y-%m-%d").date()
+                        d_close = datetime.strptime(chain.closed_date, "%Y-%m-%d").date()
+                        holding_days = max(1, (d_close - d_open).days)
+                        if risk > 0:
+                            annualized_profit_pct = round(365.0 * (realized_profit / risk) / holding_days * 100.0, 2)
+                    except ValueError:
+                        pass
 
                 qualifying.append({
                     "id": chain.id,
@@ -137,6 +148,8 @@ class ShortPutsAnalyzer:
                     "active": chain.active,
                     "opened_date": chain.opened_date,
                     "closed_date": chain.closed_date,
+                    "holding_days": holding_days,
+                    "annualized_profit_pct": annualized_profit_pct,
                     "risk": risk,
                     "net_credit": net_credit,
                     "realized_profit": realized_profit,
@@ -196,6 +209,7 @@ class ShortPutsAnalyzer:
         risk_series: List[float] = []
         profit_series: List[float] = []
         annualized_roi_series: List[float] = []
+        avg_closed_roi_series: List[float] = []
 
         curr = start_dt
         accum_daily_risk = 0.0
@@ -230,6 +244,11 @@ class ShortPutsAnalyzer:
                 annualized_roi = (integrated_profit / avg_risk) / d * 365.0 * 100.0
             annualized_roi_series.append(round(annualized_roi, 2))
 
+            # Running average of realized annual relative profits for closed positions
+            valid_closed_rois = [p["annualized_profit_pct"] for p in closed_pos if p.get("annualized_profit_pct") is not None]
+            avg_closed_roi = round(sum(valid_closed_rois) / len(valid_closed_rois), 2) if valid_closed_rois else 0.0
+            avg_closed_roi_series.append(avg_closed_roi)
+
             curr += timedelta(days=1)
 
         # Summary KPIs
@@ -247,6 +266,9 @@ class ShortPutsAnalyzer:
         current_credit_to_risk_pct = round((total_premium_at_risk / current_risk * 100.0), 2) if current_risk > 0 else 0.0
         total_credit_to_risk_pct = round((total_premium_received / total_risk_all * 100.0), 2) if total_risk_all > 0 else 0.0
 
+        all_closed_rois = [p["annualized_profit_pct"] for p in positions if not p["active"] and p.get("annualized_profit_pct") is not None]
+        overall_avg_closed_roi = round(sum(all_closed_rois) / len(all_closed_rois), 2) if all_closed_rois else 0.0
+
         return {
             "initial_date": initial_date,
             "end_date": end_dt.strftime("%Y-%m-%d"),
@@ -262,12 +284,14 @@ class ShortPutsAnalyzer:
                 "total_credit_to_risk_pct": total_credit_to_risk_pct,
                 "total_realized_profit": total_profit,
                 "current_annualized_roi": current_roi,
+                "overall_avg_closed_roi": overall_avg_closed_roi,
                 "average_risk": round(avg_risk_overall, 2)
             },
             "charts": {
                 "labels": dates_series,
                 "risk_series": risk_series,
                 "profit_series": profit_series,
-                "annualized_roi_series": annualized_roi_series
+                "annualized_roi_series": annualized_roi_series,
+                "avg_closed_roi_series": avg_closed_roi_series
             }
         }
