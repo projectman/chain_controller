@@ -137,6 +137,10 @@ def test_short_puts_web_endpoints(tmp_path):
         assert "closedAvgRoiChart" in html
         assert "Realized Annual Relative Profit, %" in html
         assert "Active (Unrealized)" in html
+        assert ">Qty<" in html
+        assert 'title="Short Put"' in html
+        assert ">SP<" in html
+        assert "$11,000" in html
 
         # 2. Active filter
         res_active = client.get("/short-puts?initial_date=2026-07-01&status=active")
