@@ -1,6 +1,6 @@
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional, Tuple
-from .models import OptionType, OptionSide, OptionsChain
+from .models import OptionType, OptionSide, OptionsChain, OptionLeg
 from .storage import ChainStorage
 
 
@@ -18,13 +18,15 @@ class ShortPutsAnalyzer:
     ) -> List[Dict[str, Any]]:
         """
         Identifies all Short Put and Credit Short Puts Spread strategies from SQLite storage.
-        If initial_date is specified, only returns positions with opened_date >= initial_date.
+        Decomposes chains into individual positions so that closed/rolled trades are properly
+        separated from active trades, accounting for realized profits, holding periods,
+        and accurate risk exposure.
         """
         meta_list = storage.list_chains(include_deleted=False)
         all_chains = [storage.get_chain(meta["id"]) for meta in meta_list]
         all_chains = [c for c in all_chains if c and c.opened_date]
 
-        # Index active long put legs across all chains by symbol to support cross-date/cross-chain pairing
+        # Index active long put legs across all chains by symbol to support cross-chain pairing
         all_active_long_puts: Dict[str, List[Tuple[OptionsChain, OptionLeg]]] = {}
         for c in all_chains:
             if not c.active:
@@ -36,132 +38,309 @@ class ShortPutsAnalyzer:
         qualifying: List[Dict[str, Any]] = []
 
         for chain in all_chains:
-            # Only exclude positions that were already closed BEFORE initial_date.
-            # Any position that was active on or after initial_date (even if opened earlier) is included,
-            # ensuring that already-open positions on Day 1 have their true risk counted!
-            if initial_date and not chain.active and chain.closed_date and chain.closed_date < initial_date:
-                continue
-
-            # Check put legs
-            put_legs = [l for l in chain.legs if l.option_type == OptionType.PUT]
+            put_legs = [l for l in chain.legs if l.option_type == OptionType.PUT and not l.deleted]
             if not put_legs:
                 continue
 
-            open_puts = [l for l in put_legs if "OPEN" in (l.action or "")]
-            short_opens = [l for l in open_puts if l.action == "SELL_TO_OPEN" or (not l.action and l.side == OptionSide.SELL)]
-            long_opens = [l for l in open_puts if l.action == "BUY_TO_OPEN" or (not l.action and l.side == OptionSide.BUY)]
+            short_opens = [l for l in put_legs if l.action == "SELL_TO_OPEN" or (not l.action and l.side == OptionSide.SELL)]
+            long_opens = [l for l in put_legs if l.action == "BUY_TO_OPEN" or (not l.action and l.side == OptionSide.BUY)]
+            short_closes = [l for l in put_legs if l.action == "BUY_TO_CLOSE"]
+            long_closes = [l for l in put_legs if l.action == "SELL_TO_CLOSE"]
 
             if not short_opens:
                 continue
 
-            strat_type = None
-            strat_name = None
-            risk = 0.0
-            net_credit = 0.0
-            strikes_label = ""
-            exp_date = ""
-            total_contracts = 0
-            mult = short_opens[0].multiplier or 100.0
+            s_open_pool = [[l, l.quantity] for l in short_opens]
+            l_open_pool = [[l, l.quantity] for l in long_opens]
+            s_close_pool = [[l, l.quantity] for l in short_closes]
+            l_close_pool = [[l, l.quantity] for l in long_closes]
 
-            # 1. Vertical Credit Put Spread (Same expiration date, short strike > long strike)
-            for s in short_opens:
-                for lo in long_opens:
-                    if s.expiration_date == lo.expiration_date and s.strike > lo.strike:
-                        strat_type = "Credit Short Puts Spread"
-                        strat_name = f"{chain.symbol} {chain.opened_date} Credit Short Puts Spread"
-                        qty = min(s.quantity, lo.quantity)
-                        total_contracts = qty
-                        risk = (s.strike - lo.strike) * qty * mult
-                        net_credit = (s.entry_price - lo.entry_price) * qty * mult
-                        strikes_label = f"${s.strike:,.2f} / ${lo.strike:,.2f}"
-                        exp_date = s.expiration_date or ""
-                        break
-                if strat_type:
-                    break
+            s_open_pool.sort(key=lambda item: (item[0].trade_date or "", item[0].strike))
+            l_open_pool.sort(key=lambda item: (item[0].trade_date or "", item[0].strike))
 
-            # 2. Diagonal Credit Spread (Different strikes and different expiration dates)
-            if not strat_type:
-                # Check within the same chain first
+            # 1. Vertical Credit Put Spreads (Same expiration date, short strike > long strike)
+            for s_item in s_open_pool:
+                s_leg, s_rem = s_item
+                if s_rem <= 0:
+                    continue
+                for l_item in l_open_pool:
+                    l_leg, l_rem = l_item
+                    if l_rem <= 0:
+                        continue
+                    if s_leg.expiration_date == l_leg.expiration_date and s_leg.strike > l_leg.strike:
+                        spread_qty = min(s_rem, l_rem)
+                        s_item[1] -= spread_qty
+                        l_item[1] -= spread_qty
+
+                        mult = s_leg.multiplier or 100.0
+                        risk = (s_leg.strike - l_leg.strike) * spread_qty * mult
+                        net_credit = (s_leg.entry_price - l_leg.entry_price) * spread_qty * mult
+                        strikes_label = f"${s_leg.strike:,.2f} / ${l_leg.strike:,.2f}"
+                        opened_date = s_leg.trade_date or chain.opened_date
+
+                        matched_s_close = next((c for c in s_close_pool if c[1] >= spread_qty and c[0].expiration_date == s_leg.expiration_date and c[0].strike == s_leg.strike), None)
+                        matched_l_close = next((c for c in l_close_pool if c[1] >= spread_qty and c[0].expiration_date == s_leg.expiration_date and c[0].strike == l_leg.strike), None)
+
+                        is_closed = False
+                        closed_date = None
+                        realized_profit = 0.0
+
+                        if matched_s_close and matched_l_close:
+                            is_closed = True
+                            matched_s_close[1] -= spread_qty
+                            matched_l_close[1] -= spread_qty
+                            closed_date = max(matched_s_close[0].trade_date or "", matched_l_close[0].trade_date or "")
+                            close_cost = (matched_s_close[0].entry_price - matched_l_close[0].entry_price) * spread_qty * mult
+                            close_fees = (matched_s_close[0].commission + matched_s_close[0].fees) * (spread_qty / matched_s_close[0].quantity) +                                          (matched_l_close[0].commission + matched_l_close[0].fees) * (spread_qty / matched_l_close[0].quantity)
+                            open_fees = (s_leg.commission + s_leg.fees) * (spread_qty / s_leg.quantity) +                                         (l_leg.commission + l_leg.fees) * (spread_qty / l_leg.quantity)
+                            realized_profit = net_credit - close_cost - (open_fees + close_fees)
+                        elif matched_s_close:
+                            is_closed = True
+                            matched_s_close[1] -= spread_qty
+                            closed_date = matched_s_close[0].trade_date
+                            close_cost = matched_s_close[0].entry_price * spread_qty * mult
+                            close_fees = (matched_s_close[0].commission + matched_s_close[0].fees) * (spread_qty / matched_s_close[0].quantity)
+                            open_fees = (s_leg.commission + s_leg.fees) * (spread_qty / s_leg.quantity) +                                         (l_leg.commission + l_leg.fees) * (spread_qty / l_leg.quantity)
+                            realized_profit = net_credit - close_cost - (open_fees + close_fees)
+                        elif not chain.active and chain.closed_date:
+                            is_closed = True
+                            closed_date = chain.closed_date
+                            realized_profit = -chain.net_initial_cost - chain.total_commissions_and_fees
+
+                        holding_days = None
+                        annualized_roi = None
+                        if is_closed and closed_date and opened_date:
+                            try:
+                                d_open = datetime.strptime(opened_date, "%Y-%m-%d").date()
+                                d_close = datetime.strptime(closed_date, "%Y-%m-%d").date()
+                                holding_days = max(1, (d_close - d_open).days)
+                                if risk > 0:
+                                    annualized_roi = round(365.0 * (realized_profit / risk) / holding_days * 100.0, 2)
+                            except ValueError:
+                                pass
+
+                        qualifying.append({
+                            "id": chain.id,
+                            "symbol": chain.symbol,
+                            "name": f"{chain.symbol} {opened_date} Credit Short Puts Spread",
+                            "original_chain_name": chain.name,
+                            "strategy_type": "Credit Short Puts Spread",
+                            "active": not is_closed,
+                            "opened_date": opened_date,
+                            "closed_date": closed_date if is_closed else None,
+                            "holding_days": holding_days,
+                            "annualized_profit_pct": annualized_roi,
+                            "risk": risk,
+                            "net_credit": net_credit,
+                            "realized_profit": round(realized_profit, 2) if is_closed else 0.0,
+                            "strikes": strikes_label,
+                            "expiration_date": s_leg.expiration_date or "",
+                            "contracts": spread_qty,
+                            "legs_count": len(chain.legs),
+                            "commissions_and_fees": chain.total_commissions_and_fees
+                        })
+
+            # 2. Diagonal Credit Spreads (Different strikes and different expiration dates)
+            for s_item in s_open_pool:
+                s_leg, s_rem = s_item
+                if s_rem <= 0:
+                    continue
                 diag_candidates = [
-                    lo for lo in long_opens 
-                    if lo.expiration_date != short_opens[0].expiration_date and lo.strike != short_opens[0].strike
+                    l_item for l_item in l_open_pool 
+                    if l_item[1] > 0 and (l_item[0].expiration_date != s_leg.expiration_date or l_item[0].strike != s_leg.strike)
                 ]
-                # If not in same chain, check across active chains in the portfolio for that underlying
+                cross_cand = None
                 if not diag_candidates and chain.active and chain.symbol in all_active_long_puts:
-                    diag_candidates = [
+                    cross_candidates = [
                         l for ch, l in all_active_long_puts[chain.symbol]
-                        if ch.id != chain.id and l.expiration_date != short_opens[0].expiration_date and l.strike != short_opens[0].strike
+                        if ch.id != chain.id and l.expiration_date != s_leg.expiration_date and l.strike != s_leg.strike
                     ]
+                    if cross_candidates:
+                        cross_cand = cross_candidates[0]
 
-                if diag_candidates:
-                    s = short_opens[0]
-                    lo = diag_candidates[0]
-                    strat_type = "Diagonal Credit Spread"
-                    strat_name = f"{chain.symbol} {chain.opened_date} Diagonal Credit Spread"
-                    qty = min(s.quantity, lo.quantity)
-                    total_contracts = qty
-                    # If short strike > long strike: risk is spread width; if long strike >= short strike: downside fully protected ($0)
-                    if s.strike > lo.strike:
-                        risk = (s.strike - lo.strike) * qty * mult
-                    else:
-                        risk = 0.0
+                if diag_candidates or cross_cand:
+                    l_leg = diag_candidates[0][0] if diag_candidates else cross_cand
+                    qty = min(s_rem, diag_candidates[0][1]) if diag_candidates else min(s_rem, cross_cand.quantity)
+                    s_item[1] -= qty
+                    if diag_candidates:
+                        diag_candidates[0][1] -= qty
 
-                    net_credit = (s.entry_price * s.quantity * mult)
-                    strikes_label = f"${s.strike:,.2f} / ${lo.strike:,.2f}"
-                    exp_date = f"{s.expiration_date or '-'} / {lo.expiration_date or '-'}"
+                    mult = s_leg.multiplier or 100.0
+                    risk = (s_leg.strike - l_leg.strike) * qty * mult if s_leg.strike > l_leg.strike else 0.0
+                    net_credit = s_leg.entry_price * qty * mult
+                    strikes_label = f"${s_leg.strike:,.2f} / ${l_leg.strike:,.2f}"
+                    s_exp = s_leg.expiration_date or "-"
+                    l_exp = l_leg.expiration_date or "-"
+                    exp_date = f"{s_exp} / {l_exp}"
+                    opened_date = s_leg.trade_date or chain.opened_date
 
-            # 3. Pure Short Put (Unhedged / Naked / Cash-Secured)
-            if not strat_type:
-                strat_type = "Short Put"
-                strat_name = f"{chain.symbol} {chain.opened_date} Short Put"
-                total_contracts = sum(s.quantity for s in short_opens)
-                exp_date = short_opens[0].expiration_date or ""
-                strikes_label = ", ".join(f"${s.strike:,.2f}" for s in short_opens)
-                for s in short_opens:
-                    risk += s.strike * s.quantity * mult
-                    net_credit += s.entry_price * s.quantity * mult
+                    matched_s_close = next((c for c in s_close_pool if c[1] >= qty and c[0].expiration_date == s_leg.expiration_date and c[0].strike == s_leg.strike), None)
+                    is_closed = False
+                    closed_date = None
+                    realized_profit = 0.0
+                    if matched_s_close:
+                        is_closed = True
+                        matched_s_close[1] -= qty
+                        closed_date = matched_s_close[0].trade_date
+                        close_cost = matched_s_close[0].entry_price * qty * mult
+                        open_fees = (s_leg.commission + s_leg.fees) * (qty / s_leg.quantity)
+                        close_fees = (matched_s_close[0].commission + matched_s_close[0].fees) * (qty / matched_s_close[0].quantity)
+                        realized_profit = net_credit - close_cost - (open_fees + close_fees)
+                    elif not chain.active and chain.closed_date:
+                        is_closed = True
+                        closed_date = chain.closed_date
+                        realized_profit = -chain.net_initial_cost - chain.total_commissions_and_fees
 
-            if strat_type:
-                # Realized profit and holding period for closed strategies
-                realized_profit = 0.0
-                holding_days = None
-                annualized_profit_pct = None
+                    holding_days = None
+                    annualized_roi = None
+                    if is_closed and closed_date and opened_date:
+                        try:
+                            d_open = datetime.strptime(opened_date, "%Y-%m-%d").date()
+                            d_close = datetime.strptime(closed_date, "%Y-%m-%d").date()
+                            holding_days = max(1, (d_close - d_open).days)
+                            if risk > 0:
+                                annualized_roi = round(365.0 * (realized_profit / risk) / holding_days * 100.0, 2)
+                        except ValueError:
+                            pass
 
-                if not chain.active and chain.closed_date and chain.opened_date:
-                    # Initial cost is negative for credit received, positive for debit paid
-                    realized_profit = -chain.net_initial_cost - chain.total_commissions_and_fees
-                    try:
-                        d_open = datetime.strptime(chain.opened_date, "%Y-%m-%d").date()
-                        d_close = datetime.strptime(chain.closed_date, "%Y-%m-%d").date()
-                        holding_days = max(1, (d_close - d_open).days)
-                        if risk > 0:
-                            annualized_profit_pct = round(365.0 * (realized_profit / risk) / holding_days * 100.0, 2)
-                    except ValueError:
-                        pass
+                    qualifying.append({
+                        "id": chain.id,
+                        "symbol": chain.symbol,
+                        "name": f"{chain.symbol} {opened_date} Diagonal Credit Spread",
+                        "original_chain_name": chain.name,
+                        "strategy_type": "Diagonal Credit Spread",
+                        "active": not is_closed,
+                        "opened_date": opened_date,
+                        "closed_date": closed_date if is_closed else None,
+                        "holding_days": holding_days,
+                        "annualized_profit_pct": annualized_roi,
+                        "risk": risk,
+                        "net_credit": net_credit,
+                        "realized_profit": round(realized_profit, 2) if is_closed else 0.0,
+                        "strikes": strikes_label,
+                        "expiration_date": exp_date,
+                        "contracts": qty,
+                        "legs_count": len(chain.legs),
+                        "commissions_and_fees": chain.total_commissions_and_fees
+                    })
 
-                qualifying.append({
-                    "id": chain.id,
-                    "symbol": chain.symbol,
-                    "name": strat_name,
-                    "original_chain_name": chain.name,
-                    "strategy_type": strat_type,
-                    "active": chain.active,
-                    "opened_date": chain.opened_date,
-                    "closed_date": chain.closed_date,
-                    "holding_days": holding_days,
-                    "annualized_profit_pct": annualized_profit_pct,
-                    "risk": risk,
-                    "net_credit": net_credit,
-                    "realized_profit": realized_profit,
-                    "strikes": strikes_label,
-                    "expiration_date": exp_date,
-                    "contracts": total_contracts,
-                    "legs_count": len(chain.legs),
-                    "commissions_and_fees": chain.total_commissions_and_fees
-                })
+            # 3. Pure Short Puts (Remaining unhedged short opens)
+            for s_item in s_open_pool:
+                s_leg, s_rem = s_item
+                if s_rem <= 0:
+                    continue
+
+                mult = s_leg.multiplier or 100.0
+                opened_date = s_leg.trade_date or chain.opened_date
+
+                matching_closes = [
+                    c for c in s_close_pool 
+                    if c[1] > 0 and c[0].expiration_date == s_leg.expiration_date and c[0].strike == s_leg.strike
+                ]
+
+                for c_item in matching_closes:
+                    if s_item[1] <= 0:
+                        break
+                    c_leg, c_rem = c_item
+                    if c_rem <= 0:
+                        continue
+                    close_qty = min(s_item[1], c_rem)
+                    s_item[1] -= close_qty
+                    c_item[1] -= close_qty
+
+                    closed_date = c_leg.trade_date or chain.closed_date
+                    risk = s_leg.strike * close_qty * mult
+                    net_credit = s_leg.entry_price * close_qty * mult
+                    open_fees = (s_leg.commission + s_leg.fees) * (close_qty / s_leg.quantity)
+                    close_fees = (c_leg.commission + c_leg.fees) * (close_qty / c_leg.quantity)
+                    realized_profit = (s_leg.entry_price - c_leg.entry_price) * close_qty * mult - (open_fees + close_fees)
+
+                    holding_days = None
+                    annualized_roi = None
+                    if closed_date and opened_date:
+                        try:
+                            d_open = datetime.strptime(opened_date, "%Y-%m-%d").date()
+                            d_close = datetime.strptime(closed_date, "%Y-%m-%d").date()
+                            holding_days = max(1, (d_close - d_open).days)
+                            if risk > 0:
+                                annualized_roi = round(365.0 * (realized_profit / risk) / holding_days * 100.0, 2)
+                        except ValueError:
+                            pass
+
+                    qualifying.append({
+                        "id": chain.id,
+                        "symbol": chain.symbol,
+                        "name": f"{chain.symbol} {opened_date} Short Put",
+                        "original_chain_name": chain.name,
+                        "strategy_type": "Short Put",
+                        "active": False,
+                        "opened_date": opened_date,
+                        "closed_date": closed_date,
+                        "holding_days": holding_days,
+                        "annualized_profit_pct": annualized_roi,
+                        "risk": risk,
+                        "net_credit": net_credit,
+                        "realized_profit": round(realized_profit, 2),
+                        "strikes": f"${s_leg.strike:,.2f}",
+                        "expiration_date": s_leg.expiration_date or "",
+                        "contracts": close_qty,
+                        "legs_count": len(chain.legs),
+                        "commissions_and_fees": chain.total_commissions_and_fees
+                    })
+
+                rem_active_qty = s_item[1]
+                if rem_active_qty > 0:
+                    risk = s_leg.strike * rem_active_qty * mult
+                    net_credit = s_leg.entry_price * rem_active_qty * mult
+
+                    is_closed = not chain.active and bool(chain.closed_date)
+                    closed_date = chain.closed_date if is_closed else None
+                    realized_profit = 0.0
+                    holding_days = None
+                    annualized_roi = None
+
+                    if is_closed and closed_date and opened_date:
+                        realized_profit = net_credit - (s_leg.commission + s_leg.fees) * (rem_active_qty / s_leg.quantity)
+                        try:
+                            d_open = datetime.strptime(opened_date, "%Y-%m-%d").date()
+                            d_close = datetime.strptime(closed_date, "%Y-%m-%d").date()
+                            holding_days = max(1, (d_close - d_open).days)
+                            if risk > 0:
+                                annualized_roi = round(365.0 * (realized_profit / risk) / holding_days * 100.0, 2)
+                        except ValueError:
+                            pass
+
+                    qualifying.append({
+                        "id": chain.id,
+                        "symbol": chain.symbol,
+                        "name": f"{chain.symbol} {opened_date} Short Put",
+                        "original_chain_name": chain.name,
+                        "strategy_type": "Short Put",
+                        "active": not is_closed,
+                        "opened_date": opened_date,
+                        "closed_date": closed_date,
+                        "holding_days": holding_days,
+                        "annualized_profit_pct": annualized_roi,
+                        "risk": risk,
+                        "net_credit": net_credit,
+                        "realized_profit": round(realized_profit, 2) if is_closed else 0.0,
+                        "strikes": f"${s_leg.strike:,.2f}",
+                        "expiration_date": s_leg.expiration_date or "",
+                        "contracts": rem_active_qty,
+                        "legs_count": len(chain.legs),
+                        "commissions_and_fees": chain.total_commissions_and_fees
+                    })
+
+        # Filter by initial_date at position level:
+        # Include if active, or if closed on or after initial_date
+        if initial_date:
+            qualifying = [
+                p for p in qualifying
+                if p["active"] or (p["closed_date"] and p["closed_date"] >= initial_date)
+            ]
 
         # Sort by opened_date ascending
-        qualifying.sort(key=lambda p: (p["opened_date"] or "", p["id"]))
+        qualifying.sort(key=lambda p: (p["opened_date"] or "", p["id"], 0 if not p["active"] else 1))
         return qualifying
 
     @classmethod

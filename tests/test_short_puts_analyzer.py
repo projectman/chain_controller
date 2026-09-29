@@ -200,3 +200,64 @@ def test_already_open_positions_included_on_initial_date(tmp_path):
     # Realized profit on Day 1 is $0, and becomes $200 on Aug 25 when CLOSED_DURING closes
     assert metrics["charts"]["profit_series"][0] == 0.0
     assert metrics["charts"]["profit_series"][idx_aug26] == 200.0
+
+
+def test_rolled_and_partially_closed_short_puts_decomposed(tmp_path):
+    """Verifies that a chain with multiple short puts (e.g. rolled or partially closed,
+    like NVDA #142) is correctly decomposed into its closed trade with realized profit
+    and its active trade with active risk, rather than lumping them together."""
+    db_file = str(tmp_path / "test_rolled_decomposed.db")
+    storage = ChainStorage(db_path=db_file)
+
+    # Replicate NVDA #142 scenario:
+    # 2026-09-17: SELL_TO_OPEN 1x 200.0 exp 2026-10-30 @ $2.80
+    # 2026-09-29: BUY_TO_CLOSE 1x 200.0 exp 2026-10-30 @ $0.97
+    # 2026-09-29: SELL_TO_OPEN 1x 200.0 exp 2026-11-20 @ $2.72
+    c = OptionsChain(symbol="NVDA", name="NVDA 2026-09-17 Strategy", active=True, opened_date="2026-09-17")
+    c.add_leg(OptionLeg(strike=200.0, option_type=OptionType.PUT, side=OptionSide.SELL, quantity=1, entry_price=2.80, action="SELL_TO_OPEN", trade_date="2026-09-17", expiration_date="2026-10-30", occ_symbol="NVDA261030P200"))
+    c.add_leg(OptionLeg(strike=200.0, option_type=OptionType.PUT, side=OptionSide.SELL, quantity=1, entry_price=2.72, action="SELL_TO_OPEN", trade_date="2026-09-29", expiration_date="2026-11-20", occ_symbol="NVDA261120P200"))
+    c.add_leg(OptionLeg(strike=200.0, option_type=OptionType.PUT, side=OptionSide.BUY, quantity=1, entry_price=0.97, action="BUY_TO_CLOSE", trade_date="2026-09-29", expiration_date="2026-10-30", occ_symbol="NVDA261030P200"))
+    storage.save_chain(c)
+
+    positions = ShortPutsAnalyzer.find_qualifying_positions(storage, initial_date="2026-09-01")
+    assert len(positions) == 2
+
+    closed_pos = next(p for p in positions if not p["active"])
+    active_pos = next(p for p in positions if p["active"])
+
+    # Closed position checks
+    assert closed_pos["symbol"] == "NVDA"
+    assert closed_pos["contracts"] == 1
+    assert closed_pos["opened_date"] == "2026-09-17"
+    assert closed_pos["closed_date"] == "2026-09-29"
+    assert closed_pos["expiration_date"] == "2026-10-30"
+    assert closed_pos["risk"] == 20000.0
+    assert closed_pos["realized_profit"] == pytest.approx((2.80 - 0.97) * 100.0)  # $183.00
+    assert closed_pos["holding_days"] == 12  # 2026-09-29 - 2026-09-17
+    # 365 * (183 / 20000) / 12 * 100% = 27.83%
+    assert closed_pos["annualized_profit_pct"] == pytest.approx(27.83, abs=0.1)
+
+    # Active position checks
+    assert active_pos["symbol"] == "NVDA"
+    assert active_pos["contracts"] == 1
+    assert active_pos["opened_date"] == "2026-09-29"
+    assert active_pos["closed_date"] is None
+    assert active_pos["expiration_date"] == "2026-11-20"
+    assert active_pos["risk"] == 20000.0
+    assert active_pos["realized_profit"] == 0.0
+    assert active_pos["annualized_profit_pct"] is None
+
+    # Check daily metrics timeline:
+    # On Sep 17: risk should be $20,000 (NOT $40,000!)
+    # On Sep 29: risk should remain $20,000 (NOT $40,000!), and realized profit should jump to $183!
+    metrics = ShortPutsAnalyzer.compute_daily_metrics(positions, initial_date="2026-09-15", end_date="2026-09-30")
+    idx_sep17 = metrics["charts"]["labels"].index("2026-09-17")
+    idx_sep28 = metrics["charts"]["labels"].index("2026-09-28")
+    idx_sep29 = metrics["charts"]["labels"].index("2026-09-29")
+
+    assert metrics["charts"]["risk_series"][idx_sep17] == 20000.0
+    assert metrics["charts"]["risk_series"][idx_sep28] == 20000.0
+    assert metrics["charts"]["risk_series"][idx_sep29] == 20000.0
+
+    assert metrics["charts"]["profit_series"][idx_sep28] == 0.0
+    assert metrics["charts"]["profit_series"][idx_sep29] == pytest.approx(183.0)
