@@ -108,10 +108,15 @@ def test_short_puts_web_endpoints(tmp_path):
     db_file = str(tmp_path / "test_web_analyzer.db")
     storage = ChainStorage(db_path=db_file)
 
-    # Seed short put
+    # Seed short put TGT
     c = OptionsChain(symbol="TGT", name="TGT 2026-07-07 Strategy", active=True, opened_date="2026-07-07")
     c.add_leg(OptionLeg(strike=110.0, option_type=OptionType.PUT, side=OptionSide.SELL, quantity=1, entry_price=2.50, action="SELL_TO_OPEN", trade_date="2026-07-07", expiration_date="2026-08-21", occ_symbol="TGT260821P110"))
     storage.save_chain(c)
+
+    # Seed short put NVDA
+    c2 = OptionsChain(symbol="NVDA", name="NVDA 2026-07-10 Strategy", active=True, opened_date="2026-07-10")
+    c2.add_leg(OptionLeg(strike=120.0, option_type=OptionType.PUT, side=OptionSide.SELL, quantity=1, entry_price=3.00, action="SELL_TO_OPEN", trade_date="2026-07-10", expiration_date="2026-08-21", occ_symbol="NVDA260821P120"))
+    storage.save_chain(c2)
 
     app = create_app(db_path=db_file, sources_dir="sources")
     app.config["TESTING"] = True
@@ -122,8 +127,10 @@ def test_short_puts_web_endpoints(tmp_path):
         html = res.get_data(as_text=True)
         assert "Short Puts &amp; Credit Puts Analyzer" in html or "Short Puts" in html
         assert "TGT 2026-07-07 Short Put" in html
-        assert "Active (1)" in html
+        assert "NVDA 2026-07-10 Short Put" in html
+        assert "Active (2)" in html
         assert "Closed (0)" in html
+        assert "symbolSelect" in html
         assert "riskChart" in html
         assert "profitChart" in html
         assert "roiChart" in html
@@ -141,14 +148,39 @@ def test_short_puts_web_endpoints(tmp_path):
         assert res_closed.status_code == 200
         assert "No qualifying Short Put or Credit Put Spread positions found" in res_closed.get_data(as_text=True)
 
-        # 4. API test
+                # 4. API test
         api_res = client.get("/api/short-puts/data?initial_date=2026-07-01")
         assert api_res.status_code == 200
         data = api_res.get_json()
         assert "metrics" in data
         assert "positions" in data
-        assert len(data["positions"]) == 1
-        assert data["positions"][0]["name"] == "TGT 2026-07-07 Short Put"
+        assert len(data["positions"]) == 2
+
+        # 5. Symbol filter on web page
+        res_tgt = client.get("/short-puts?initial_date=2026-07-01&symbol=TGT")
+        assert res_tgt.status_code == 200
+        html_tgt = res_tgt.get_data(as_text=True)
+        assert "TGT 2026-07-07 Short Put" in html_tgt
+        assert "NVDA 2026-07-10 Short Put" not in html_tgt
+        assert "Active (1)" in html_tgt
+
+        res_nvda = client.get("/short-puts?initial_date=2026-07-01&symbol=NVDA")
+        assert res_nvda.status_code == 200
+        html_nvda = res_nvda.get_data(as_text=True)
+        assert "NVDA 2026-07-10 Short Put" in html_nvda
+        assert "TGT 2026-07-07 Short Put" not in html_nvda
+
+        # 6. Symbol filter on API
+        api_nvda = client.get("/api/short-puts/data?initial_date=2026-07-01&symbol=NVDA")
+        assert api_nvda.status_code == 200
+        data_nvda = api_nvda.get_json()
+        assert len(data_nvda["positions"]) == 1
+        assert data_nvda["positions"][0]["symbol"] == "NVDA"
+
+        # 7. Non-existent symbol filter gives empty state
+        res_empty = client.get("/short-puts?initial_date=2026-07-01&symbol=MSFT")
+        assert res_empty.status_code == 200
+        assert "No qualifying Short Put or Credit Put Spread positions found for" in res_empty.get_data(as_text=True)
 
 
 def test_already_open_positions_included_on_initial_date(tmp_path):

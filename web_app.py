@@ -220,21 +220,34 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
             initial_date = earliest_date
 
         status_filter = request.args.get("status", "all").lower()
+        symbol_filter = request.args.get("symbol", "").upper().strip()
+        if symbol_filter == "ALL":
+            symbol_filter = ""
 
         all_positions = ShortPutsAnalyzer.find_qualifying_positions(storage, initial_date=initial_date)
         metrics = ShortPutsAnalyzer.compute_daily_metrics(all_positions, initial_date=initial_date)
 
-        count_all = len(all_positions)
-        count_active = sum(1 for p in all_positions if p["active"])
-        count_closed = sum(1 for p in all_positions if not p["active"])
+        # Count occurrences per symbol across all qualifying positions
+        symbol_counts: Dict[str, int] = {}
+        for p in all_positions:
+            sym = p["symbol"]
+            symbol_counts[sym] = symbol_counts.get(sym, 0) + 1
+        available_symbols = sorted(symbol_counts.keys())
+
+        # Positions scoped to selected symbol (if any) for status counts and display
+        symbol_scoped_positions = [p for p in all_positions if p["symbol"] == symbol_filter] if symbol_filter else all_positions
+
+        count_all = len(symbol_scoped_positions)
+        count_active = sum(1 for p in symbol_scoped_positions if p["active"])
+        count_closed = sum(1 for p in symbol_scoped_positions if not p["active"])
 
         if status_filter == "active":
-            displayed_positions = [p for p in all_positions if p["active"]]
+            displayed_positions = [p for p in symbol_scoped_positions if p["active"]]
         elif status_filter == "closed":
-            displayed_positions = [p for p in all_positions if not p["active"]]
+            displayed_positions = [p for p in symbol_scoped_positions if not p["active"]]
         else:
             status_filter = "all"
-            displayed_positions = all_positions
+            displayed_positions = symbol_scoped_positions
 
         return render_template(
             "short_puts_analyzer.html",
@@ -242,6 +255,9 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
             initial_date=initial_date,
             earliest_date=earliest_date,
             current_status=status_filter,
+            selected_symbol=symbol_filter,
+            available_symbols=available_symbols,
+            symbol_counts=symbol_counts,
             counts={
                 "all": count_all,
                 "active": count_active,
@@ -258,7 +274,14 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
         if not initial_date:
             initial_date = earliest_date
 
+        symbol_filter = request.args.get("symbol", "").upper().strip()
+        if symbol_filter == "ALL":
+            symbol_filter = ""
+
         positions = ShortPutsAnalyzer.find_qualifying_positions(storage, initial_date=initial_date)
+        if symbol_filter:
+            positions = [p for p in positions if p["symbol"] == symbol_filter]
+
         metrics = ShortPutsAnalyzer.compute_daily_metrics(positions, initial_date=initial_date)
         return jsonify({
             "positions": positions,

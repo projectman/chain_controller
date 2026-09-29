@@ -21,6 +21,7 @@
     <div class="bg-slate-900/90 border border-slate-700/70 p-3 rounded-xl flex flex-col sm:flex-row items-center gap-3">
       <form method="GET" action="/short-puts" class="flex items-center gap-2" id="dateForm">
         <input type="hidden" name="status" value="{{ current_status }}">
+        {% if selected_symbol %}<input type="hidden" name="symbol" value="{{ selected_symbol }}">{% endif %}
         <label for="initial_date" class="text-xs font-semibold uppercase tracking-wider text-slate-400">
           Initial Date:
         </label>
@@ -219,20 +220,38 @@
         </p>
       </div>
 
-      <!-- Selector: All / Active / Closed -->
-      <div class="inline-flex p-1 bg-slate-900/90 rounded-lg border border-slate-700/80 text-xs font-semibold self-start sm:self-auto shadow-inner">
-        <a href="/short-puts?initial_date={{ initial_date }}&status=all" 
-           class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'all' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
-          All ({{ counts.all }})
-        </a>
-        <a href="/short-puts?initial_date={{ initial_date }}&status=active" 
-           class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'active' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
-          Active ({{ counts.active }})
-        </a>
-        <a href="/short-puts?initial_date={{ initial_date }}&status=closed" 
-           class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'closed' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
-          Closed ({{ counts.closed }})
-        </a>
+      <!-- Filters: Symbol Selector & Status Tabs -->
+      <div class="flex flex-wrap items-center gap-3 self-start sm:self-auto">
+        <!-- Symbol Selector Dropdown -->
+        <div class="inline-flex items-center gap-2 bg-slate-900/90 rounded-lg border border-slate-700/80 px-2.5 py-1 shadow-inner">
+          <label for="symbolSelect" class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Symbol:</label>
+          <select id="symbolSelect" 
+                  onchange="filterBySymbol(this.value)" 
+                  class="bg-slate-800 text-slate-200 text-xs font-semibold rounded border border-slate-600 px-2 py-1 focus:ring-1 focus:ring-indigo-500 focus:outline-none cursor-pointer">
+            <option value="ALL">All Symbols ({{ symbol_counts.values() | sum }})</option>
+            {% for sym in available_symbols %}
+            <option value="{{ sym }}" {% if selected_symbol == sym %}selected{% endif %}>
+              {{ sym }} ({{ symbol_counts[sym] }})
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Status Tabs: All / Active / Closed -->
+        <div class="inline-flex p-1 bg-slate-900/90 rounded-lg border border-slate-700/80 text-xs font-semibold shadow-inner">
+          <a href="/short-puts?initial_date={{ initial_date }}&status=all{% if selected_symbol %}&symbol={{ selected_symbol }}{% endif %}" 
+             class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'all' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+            All ({{ counts.all }})
+          </a>
+          <a href="/short-puts?initial_date={{ initial_date }}&status=active{% if selected_symbol %}&symbol={{ selected_symbol }}{% endif %}" 
+             class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'active' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+            Active ({{ counts.active }})
+          </a>
+          <a href="/short-puts?initial_date={{ initial_date }}&status=closed{% if selected_symbol %}&symbol={{ selected_symbol }}{% endif %}" 
+             class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'closed' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+            Closed ({{ counts.closed }})
+          </a>
+        </div>
       </div>
     </div>
 
@@ -260,7 +279,7 @@
           {% if not positions %}
           <tr>
             <td colspan="14" class="px-6 py-12 text-center text-slate-400">
-              No qualifying Short Put or Credit Put Spread positions found on or after {{ initial_date }}.
+              No qualifying Short Put or Credit Put Spread positions found{% if selected_symbol %} for <strong class="text-white">{{ selected_symbol }}</strong>{% endif %} on or after {{ initial_date }}.
             </td>
           </tr>
           {% endif %}
@@ -451,6 +470,16 @@ function setDaysAgo(days) {
   d.setDate(d.getDate() - days);
   const dateStr = d.toISOString().split("T")[0];
   setInitialDate(dateStr);
+}
+
+function filterBySymbol(sym) {
+  const url = new URL(window.location.href);
+  if (sym && sym !== 'ALL') {
+    url.searchParams.set('symbol', sym);
+  } else {
+    url.searchParams.delete('symbol');
+  }
+  window.location.href = url.toString();
 }
 
 // Chart.js Setup
