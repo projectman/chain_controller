@@ -1,5 +1,6 @@
 import os
 import argparse
+from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 
@@ -46,6 +47,8 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
             "commissions_and_fees": chain.total_commissions_and_fees,
             "breakeven_points": summary["breakeven_points"],
             "max_profit": summary["max_profit"] if isinstance(summary["max_profit"], str) else f"${summary['max_profit']:,.2f}",
+            "raw_max_profit": summary["max_profit"],
+            "realized_profit": -summary["net_initial_cost"] if not chain.active else 0.0,
             "max_loss": summary["max_loss"] if isinstance(summary["max_loss"], str) else f"${summary['max_loss']:,.2f}",
             "risk_reward": summary["risk_reward_ratio"]
         }
@@ -162,26 +165,70 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
 
         status_filter = request.args.get("status", "all").lower()
         search_query = request.args.get("q", "").strip().upper()
+        date_preset = request.args.get("date_preset", "all").lower().strip()
+        if date_preset in ("1", "1m", "1-month"):
+            date_preset = "1m"
+        elif date_preset in ("3", "3m", "3-months"):
+            date_preset = "3m"
+        elif date_preset in ("6", "6m", "6-months"):
+            date_preset = "6m"
+        elif date_preset in ("12", "12m", "12-months"):
+            date_preset = "12m"
+        elif date_preset == "ytd":
+            date_preset = "ytd"
+        else:
+            date_preset = "all"
+
+        today = date.today()
+        start_date: Optional[str] = None
+        if date_preset == "1m":
+            start_date = (today - timedelta(days=30)).strftime("%Y-%m-%d")
+        elif date_preset == "3m":
+            start_date = (today - timedelta(days=90)).strftime("%Y-%m-%d")
+        elif date_preset == "6m":
+            start_date = (today - timedelta(days=180)).strftime("%Y-%m-%d")
+        elif date_preset == "12m":
+            start_date = (today - timedelta(days=365)).strftime("%Y-%m-%d")
+        elif date_preset == "ytd":
+            start_date = date(today.year, 1, 1).strftime("%Y-%m-%d")
+
+        custom_start = request.args.get("initial_date") or request.args.get("start_date")
+        if custom_start:
+            start_date = custom_start
 
         if view_mode == "simple":
             positions, counts = storage.list_simple_positions(status=status_filter, search=search_query)
+            if start_date:
+                positions = [p for p in positions if p.get("trade_date") and p.get("trade_date") >= start_date]
+            simple_total_outlay = sum(p["outlay"] for p in positions)
             return render_template(
                 "chains_list.html",
                 active_page="chains",
                 view_mode="simple",
                 current_status=status_filter,
                 search=search_query,
+                date_preset=date_preset,
                 counts=counts,
-                positions=positions
+                positions=positions,
+                total_outlay=simple_total_outlay,
+                total_outlay_formatted=f"-${abs(simple_total_outlay):,.2f}" if simple_total_outlay < 0 else f"${simple_total_outlay:,.2f}"
             )
 
         # Chains view mode:
-        count_all = len(storage.list_chains(status="all"))
-        count_active = len(storage.list_chains(status="active"))
-        count_closed = len(storage.list_chains(status="closed"))
-        count_deleted = len(storage.list_chains(status="deleted"))
+        def filter_meta_by_date(meta_list):
+            if not start_date:
+                return meta_list
+            return [m for m in meta_list if m.get("opened_date") and m.get("opened_date") >= start_date]
+
+        count_all = len(filter_meta_by_date(storage.list_chains(status="all")))
+        count_active = len(filter_meta_by_date(storage.list_chains(status="active")))
+        count_closed = len(filter_meta_by_date(storage.list_chains(status="closed")))
+        count_deleted = len(filter_meta_by_date(storage.list_chains(status="deleted")))
 
         matching_meta = storage.list_chains(status=status_filter if status_filter in ("active", "closed", "deleted") else "all")
+        if start_date:
+            matching_meta = [m for m in matching_meta if m.get("opened_date") and m.get("opened_date") >= start_date]
+
         all_chains: List[OptionsChain] = []
         for meta in matching_meta:
             loaded = storage.get_chain(meta["id"])
@@ -197,19 +244,47 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
 
         formatted_chains = [format_chain(c) for c in filtered]
 
+        # Calculate summary totals for selected chains
+        total_net_outlay = sum(c["net_outlay"] for c in formatted_chains)
+        total_realized_profit = sum(c["realized_profit"] for c in formatted_chains if not c["active"])
+        total_active_max_profit = sum(
+            c["raw_max_profit"] for c in formatted_chains 
+            if c["active"] and isinstance(c["raw_max_profit"], (int, float))
+        )
+        unbounded_active_count = sum(
+            1 for c in formatted_chains 
+            if c["active"] and not isinstance(c["raw_max_profit"], (int, float))
+        )
+        active_count = sum(1 for c in formatted_chains if c["active"])
+        closed_count = sum(1 for c in formatted_chains if not c["active"])
+
+        totals = {
+            "net_outlay": total_net_outlay,
+            "net_outlay_formatted": f"-${abs(total_net_outlay):,.2f}" if total_net_outlay < 0 else f"${total_net_outlay:,.2f}",
+            "realized_profit": total_realized_profit,
+            "realized_profit_formatted": f"+${total_realized_profit:,.2f}" if total_realized_profit >= 0 else f"-${abs(total_realized_profit):,.2f}",
+            "active_max_profit": total_active_max_profit,
+            "active_max_profit_formatted": f"${total_active_max_profit:,.2f}",
+            "unbounded_count": unbounded_active_count,
+            "active_count": active_count,
+            "closed_count": closed_count,
+        }
+
         return render_template(
             "chains_list.html",
             active_page="chains",
             view_mode="chains",
             current_status=status_filter,
             search=search_query,
+            date_preset=date_preset,
             counts={
                 "all": count_all, 
                 "active": count_active, 
                 "closed": count_closed,
                 "deleted": count_deleted
             },
-            chains=formatted_chains
+            chains=formatted_chains,
+            totals=totals
         )
 
     @app.route("/short-puts")

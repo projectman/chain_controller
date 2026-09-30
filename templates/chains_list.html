@@ -18,11 +18,11 @@
     <div class="flex items-center gap-3">
       <!-- View Mode Switcher: Chains vs Simple -->
       <div class="inline-flex p-1 bg-slate-900/90 rounded-lg border border-slate-700/80 text-xs font-semibold">
-        <a href="/chains?view=chains&status={{ current_status }}{% if search %}&q={{ search }}{% endif %}" 
+        <a href="/chains?view=chains&status={{ current_status }}&date_preset={{ date_preset }}{% if search %}&q={{ search }}{% endif %}" 
            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md transition {% if view_mode == 'chains' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
           <span>🔀</span> Chains
         </a>
-        <a href="/chains?view=simple&status={{ current_status }}{% if search %}&q={{ search }}{% endif %}" 
+        <a href="/chains?view=simple&status={{ current_status }}&date_preset={{ date_preset }}{% if search %}&q={{ search }}{% endif %}" 
            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md transition {% if view_mode == 'simple' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
           <span>📄</span> Simple
         </a>
@@ -38,28 +38,53 @@
   <div id="actionBanner" class="hidden p-4 rounded-xl border transition duration-300"></div>
 
   <!-- Filter & Controls Toolbar -->
-  <div class="bg-slate-800/70 border border-slate-700/70 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+  <div class="bg-slate-800/70 border border-slate-700/70 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
     
-    <!-- 4-State Selector: All / Active / Closed / Deleted -->
-    <div class="inline-flex p-1 bg-slate-900/80 rounded-lg border border-slate-700/60 text-xs font-semibold">
-      <a href="/chains?view={{ view_mode }}&status=all{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'all' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
-        All ({{ counts.all }})
-      </a>
-      <a href="/chains?view={{ view_mode }}&status=active{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'active' %}bg-emerald-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
-        Active ({{ counts.active }})
-      </a>
-      <a href="/chains?view={{ view_mode }}&status=closed{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'closed' %}bg-slate-700 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
-        Closed ({{ counts.closed }})
-      </a>
-      <a href="/chains?view={{ view_mode }}&status=deleted{% if search %}&q={{ search }}{% endif %}" class="px-3.5 py-1.5 rounded-md transition {% if current_status == 'deleted' %}bg-rose-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
-        Deleted ({{ counts.deleted }})
-      </a>
+    <div class="flex flex-wrap items-center gap-3">
+      <!-- 4-State Selector: All / Active / Closed / Deleted -->
+      <div class="inline-flex p-1 bg-slate-900/80 rounded-lg border border-slate-700/60 text-xs font-semibold">
+        <a href="/chains?view={{ view_mode }}&status=all&date_preset={{ date_preset }}{% if search %}&q={{ search }}{% endif %}" class="px-3 py-1.5 rounded-md transition {% if current_status == 'all' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+          All ({{ counts.all }})
+        </a>
+        <a href="/chains?view={{ view_mode }}&status=active&date_preset={{ date_preset }}{% if search %}&q={{ search }}{% endif %}" class="px-3 py-1.5 rounded-md transition {% if current_status == 'active' %}bg-emerald-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+          Active ({{ counts.active }})
+        </a>
+        <a href="/chains?view={{ view_mode }}&status=closed&date_preset={{ date_preset }}{% if search %}&q={{ search }}{% endif %}" class="px-3 py-1.5 rounded-md transition {% if current_status == 'closed' %}bg-slate-700 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+          Closed ({{ counts.closed }})
+        </a>
+        <a href="/chains?view={{ view_mode }}&status=deleted&date_preset={{ date_preset }}{% if search %}&q={{ search }}{% endif %}" class="px-3 py-1.5 rounded-md transition {% if current_status == 'deleted' %}bg-rose-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}">
+          Deleted ({{ counts.deleted }})
+        </a>
+      </div>
+
+      <!-- Date Presets: All, YTD, 12M, 6M, 3M, 1M -->
+      <div class="inline-flex p-1 bg-slate-900/80 rounded-lg border border-slate-700/60 text-xs font-semibold">
+        <a href="/chains?view={{ view_mode }}&status={{ current_status }}&date_preset=all{% if search %}&q={{ search }}{% endif %}" class="px-2.5 py-1.5 rounded-md transition {% if date_preset == 'all' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}" title="All Time">
+          All
+        </a>
+        <a href="/chains?view={{ view_mode }}&status={{ current_status }}&date_preset=ytd{% if search %}&q={{ search }}{% endif %}" class="px-2.5 py-1.5 rounded-md transition {% if date_preset == 'ytd' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}" title="Year to Date">
+          YTD
+        </a>
+        <a href="/chains?view={{ view_mode }}&status={{ current_status }}&date_preset=12m{% if search %}&q={{ search }}{% endif %}" class="px-2.5 py-1.5 rounded-md transition {% if date_preset == '12m' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}" title="Past 12 Months">
+          12M
+        </a>
+        <a href="/chains?view={{ view_mode }}&status={{ current_status }}&date_preset=6m{% if search %}&q={{ search }}{% endif %}" class="px-2.5 py-1.5 rounded-md transition {% if date_preset == '6m' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}" title="Past 6 Months">
+          6M
+        </a>
+        <a href="/chains?view={{ view_mode }}&status={{ current_status }}&date_preset=3m{% if search %}&q={{ search }}{% endif %}" class="px-2.5 py-1.5 rounded-md transition {% if date_preset == '3m' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}" title="Past 3 Months">
+          3M
+        </a>
+        <a href="/chains?view={{ view_mode }}&status={{ current_status }}&date_preset=1m{% if search %}&q={{ search }}{% endif %}" class="px-2.5 py-1.5 rounded-md transition {% if date_preset == '1m' %}bg-indigo-600 text-white shadow-sm{% else %}text-slate-400 hover:text-white{% endif %}" title="Past 1 Month">
+          1M
+        </a>
+      </div>
     </div>
 
     <!-- Search Input -->
     <form method="GET" action="/chains" class="relative max-w-xs w-full">
       <input type="hidden" name="view" value="{{ view_mode }}">
       <input type="hidden" name="status" value="{{ current_status }}">
+      <input type="hidden" name="date_preset" value="{{ date_preset }}">
       <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
         <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
@@ -73,7 +98,7 @@
         class="w-full pl-9 pr-8 py-1.5 bg-slate-900/90 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition"
       >
       {% if search %}
-      <a href="/chains?view={{ view_mode }}&status={{ current_status }}" class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-white text-xs">
+      <a href="/chains?view={{ view_mode }}&status={{ current_status }}&date_preset={{ date_preset }}" class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-white text-xs">
         ✕
       </a>
       {% endif %}
@@ -231,6 +256,49 @@
           {% endfor %}
 
         </tbody>
+        <tfoot class="bg-slate-900/95 border-t-2 border-slate-700 text-xs font-semibold">
+          <tr>
+            <td colspan="7" class="px-4 py-3.5 text-left text-slate-300 font-bold">
+              <div class="flex items-center justify-between">
+                <span>TOTALS ({{ chains|length }} {% if chains|length == 1 %}chain{% else %}chains{% endif %})</span>
+                {% if current_status == 'all' and totals.closed_count > 0 and totals.active_count > 0 %}
+                <span class="text-slate-400 font-normal text-[11px] mr-2">
+                  (Realized: <span class="{% if totals.realized_profit >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %} font-mono font-bold">{{ totals.realized_profit_formatted }}</span> &bull; Active Max Pot.: <span class="text-indigo-300 font-mono font-bold">{{ totals.active_max_profit_formatted }}</span>{% if totals.unbounded_count > 0 %}<span class="text-slate-400"> + {{ totals.unbounded_count }} &infin;</span>{% endif %})
+                </span>
+                {% endif %}
+              </div>
+            </td>
+            <td class="px-4 py-3.5 text-right font-mono font-bold {% if totals.net_outlay < 0 %}text-emerald-400{% else %}text-amber-400{% endif %} whitespace-nowrap">
+              {{ totals.net_outlay_formatted }}
+            </td>
+            <td class="px-4 py-3.5 text-right font-mono font-bold whitespace-nowrap">
+              {% if current_status == 'closed' %}
+                <span class="{% if totals.realized_profit >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                  {{ totals.realized_profit_formatted }}
+                </span>
+              {% elif current_status == 'active' %}
+                <span class="text-indigo-300">
+                  {{ totals.active_max_profit_formatted }}
+                  {% if totals.unbounded_count > 0 %}
+                  <span class="text-[10px] text-slate-400 font-normal">(+{{ totals.unbounded_count }} &infin;)</span>
+                  {% endif %}
+                </span>
+              {% else %}
+                <div class="flex flex-col text-right">
+                  <span class="{% if totals.realized_profit >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}" title="Total Realized Profit/Loss">
+                    {{ totals.realized_profit_formatted }}
+                  </span>
+                  {% if totals.active_count > 0 %}
+                  <span class="text-[10px] text-indigo-300 font-normal" title="Active Max Potential Profit">
+                    +{{ totals.active_max_profit_formatted }} pot.{% if totals.unbounded_count > 0 %} +{{ totals.unbounded_count }}&infin;{% endif %}
+                  </span>
+                  {% endif %}
+                </div>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3.5"></td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   </div>
@@ -323,6 +391,17 @@
           {% endfor %}
 
         </tbody>
+        <tfoot class="bg-slate-900/95 border-t-2 border-slate-700 text-xs font-semibold">
+          <tr>
+            <td colspan="12" class="px-3 py-3.5 text-left text-slate-300 font-bold">
+              TOTALS ({{ positions|length }} {% if positions|length == 1 %}position{% else %}positions{% endif %})
+            </td>
+            <td class="px-3 py-3.5 text-right font-mono font-bold {% if total_outlay < 0 %}text-emerald-400{% else %}text-amber-400{% endif %} whitespace-nowrap">
+              {{ total_outlay_formatted }}
+            </td>
+            <td class="px-3 py-3.5"></td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   </div>

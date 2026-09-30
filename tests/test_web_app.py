@@ -157,3 +157,56 @@ def test_simple_view_and_leg_delete_revert(client):
     rev_leg_res = client.post("/api/legs/1/revert")
     assert rev_leg_res.status_code == 200
     assert rev_leg_res.get_json()["success"] is True
+
+
+def test_chains_date_presets(client):
+    # 1. 1M preset: only AAPL (opened 2026-08-31) should match, IBM (opened 2026-07-14) is > 30 days ago
+    res_1m = client.get("/chains?date_preset=1m")
+    assert res_1m.status_code == 200
+    html_1m = res_1m.get_data(as_text=True)
+    assert "AAPL 2026-08-31 Strategy" in html_1m
+    assert "IBM 2026-07-14 Strategy" not in html_1m
+    assert "TOTALS (1 chain)" in html_1m
+    assert "$500.00" in html_1m
+
+    # 2. 3M preset: both AAPL and IBM are within 90 days
+    res_3m = client.get("/chains?date_preset=3m")
+    assert res_3m.status_code == 200
+    html_3m = res_3m.get_data(as_text=True)
+    assert "AAPL 2026-08-31 Strategy" in html_3m
+    assert "IBM 2026-07-14 Strategy" in html_3m
+    assert "TOTALS (2 chains)" in html_3m
+    # AAPL outlay is +$500, IBM outlay is -$200 => net outlay +$300.00
+    assert "$300.00" in html_3m
+
+    # 3. YTD and All presets
+    res_ytd = client.get("/chains?date_preset=ytd")
+    assert res_ytd.status_code == 200
+    assert "AAPL 2026-08-31 Strategy" in res_ytd.get_data(as_text=True)
+    assert "IBM 2026-07-14 Strategy" in res_ytd.get_data(as_text=True)
+
+    res_all = client.get("/chains?date_preset=all")
+    assert res_all.status_code == 200
+    assert "AAPL 2026-08-31 Strategy" in res_all.get_data(as_text=True)
+    assert "IBM 2026-07-14 Strategy" in res_all.get_data(as_text=True)
+
+
+def test_chains_footer_totals_by_status(client):
+    # Closed chains footer totals
+    res_closed = client.get("/chains?status=closed")
+    assert res_closed.status_code == 200
+    html_closed = res_closed.get_data(as_text=True)
+    assert "TOTALS (1 chain)" in html_closed
+    # IBM Net Outlay is -$200.00
+    assert "-$200.00" in html_closed
+    # IBM Realized Profit is +$200.00
+    assert "+$200.00" in html_closed
+
+    # Active chains footer totals
+    res_active = client.get("/chains?status=active")
+    assert res_active.status_code == 200
+    html_active = res_active.get_data(as_text=True)
+    assert "TOTALS (1 chain)" in html_active
+    # AAPL Net Outlay is +$500.00
+    assert "$500.00" in html_active
+
