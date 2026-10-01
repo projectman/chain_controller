@@ -27,7 +27,9 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
             "trade_date": leg.trade_date,
             "expiration_date": leg.expiration_date,
             "occ_symbol": leg.occ_symbol,
-            "outlay": leg.initial_cost
+            "outlay": leg.initial_cost,
+            "source_chain_id": getattr(leg, "source_chain_id", None),
+            "is_child": getattr(leg, "is_child", False)
         }
 
     def format_chain(chain: OptionsChain) -> Dict[str, Any]:
@@ -41,6 +43,8 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
             "opened_date": chain.opened_date,
             "closed_date": chain.closed_date,
             "deleted": bool(getattr(chain, "deleted", False)),
+            "parent_chain_id": getattr(chain, "parent_chain_id", None),
+            "child_chain_ids": getattr(chain, "child_chain_ids", []),
             "legs": formatted_legs,
             "net_outlay": summary["net_initial_cost"],
             "cost_type": summary["cost_type"],
@@ -157,6 +161,35 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
 
+    @app.route("/api/chains/<int:chain_id>/join", methods=["POST"])
+    def api_join_chain(chain_id: int):
+        try:
+            data = request.get_json(silent=True) or request.form
+            parent_id_raw = data.get("parent_id")
+            if parent_id_raw is None:
+                return jsonify({"success": False, "error": "Parent chain ID is required."}), 400
+            try:
+                parent_id = int(parent_id_raw)
+            except ValueError:
+                return jsonify({"success": False, "error": "Invalid parent chain ID."}), 400
+
+            success, msg = storage.join_chain(child_id=chain_id, parent_id=parent_id)
+            if success:
+                return jsonify({"success": True, "message": msg})
+            return jsonify({"success": False, "error": msg}), 400
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/chains/<int:chain_id>/unjoin", methods=["POST"])
+    def api_unjoin_chain(chain_id: int):
+        try:
+            success, msg = storage.unjoin_chain(child_id=chain_id)
+            if success:
+                return jsonify({"success": True, "message": msg})
+            return jsonify({"success": False, "error": msg}), 400
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
     @app.route("/chains")
     def chains_page():
         view_mode = request.args.get("view", "chains").lower()
@@ -244,19 +277,20 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
 
         formatted_chains = [format_chain(c) for c in filtered]
 
-        # Calculate summary totals for selected chains
-        total_net_outlay = sum(c["net_outlay"] for c in formatted_chains)
-        total_realized_profit = sum(c["realized_profit"] for c in formatted_chains if not c["active"])
+        # Calculate summary totals for selected chains (exclude child chains to prevent double-counting)
+        root_chains = [c for c in formatted_chains if not c.get("parent_chain_id")]
+        total_net_outlay = sum(c["net_outlay"] for c in root_chains)
+        total_realized_profit = sum(c["realized_profit"] for c in root_chains if not c["active"])
         total_active_max_profit = sum(
-            c["raw_max_profit"] for c in formatted_chains 
+            c["raw_max_profit"] for c in root_chains 
             if c["active"] and isinstance(c["raw_max_profit"], (int, float))
         )
         unbounded_active_count = sum(
-            1 for c in formatted_chains 
+            1 for c in root_chains 
             if c["active"] and not isinstance(c["raw_max_profit"], (int, float))
         )
-        active_count = sum(1 for c in formatted_chains if c["active"])
-        closed_count = sum(1 for c in formatted_chains if not c["active"])
+        active_count = sum(1 for c in root_chains if c["active"])
+        closed_count = sum(1 for c in root_chains if not c["active"])
 
         totals = {
             "net_outlay": total_net_outlay,

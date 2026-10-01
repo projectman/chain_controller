@@ -39,6 +39,8 @@ class OptionLeg:
     tx_hash: Optional[str] = None
     deleted: bool = False
     id: Optional[int] = None
+    source_chain_id: Optional[int] = None
+    is_child: bool = False
 
     def __post_init__(self):
         if self.current_price is None:
@@ -129,6 +131,8 @@ class OptionsChain:
     closed_date: Optional[str] = None
     deleted: bool = False
     id: Optional[int] = None
+    parent_chain_id: Optional[int] = None
+    child_chain_ids: List[int] = field(default_factory=list)
 
     def add_leg(self, leg: OptionLeg) -> None:
         self.legs.append(leg)

@@ -41,7 +41,9 @@ class ChainStorage:
                     opened_date TEXT,
                     closed_date TEXT,
                     deleted INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    parent_chain_id INTEGER DEFAULT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (parent_chain_id) REFERENCES chains (id)
                 );
             """)
 
@@ -79,6 +81,8 @@ class ChainStorage:
                 cursor.execute("ALTER TABLE chains ADD COLUMN closed_date TEXT")
             if 'deleted' not in chain_cols:
                 cursor.execute("ALTER TABLE chains ADD COLUMN deleted INTEGER DEFAULT 0")
+            if 'parent_chain_id' not in chain_cols:
+                cursor.execute("ALTER TABLE chains ADD COLUMN parent_chain_id INTEGER DEFAULT NULL REFERENCES chains(id)")
 
             cursor.execute("PRAGMA table_info(legs)")
             leg_cols = {row['name'] for row in cursor.fetchall()}
@@ -129,37 +133,41 @@ class ChainStorage:
                             chain.id = r['chain_id']
                             break
 
+            parent_id_val = getattr(chain, 'parent_chain_id', None)
+
             if chain.id is not None:
                 # Update existing chain header
                 cursor.execute("""
                     UPDATE chains 
                     SET symbol = ?, name = ?, underlying_entry_price = ?, underlying_current_price = ?,
                         shares = ?, share_entry_price = ?, share_current_price = ?,
-                        active = ?, opened_date = ?, closed_date = ?, deleted = ?
+                        active = ?, opened_date = ?, closed_date = ?, deleted = ?, parent_chain_id = ?
                     WHERE id = ?
                 """, (
                     chain.symbol, chain.name, chain.underlying_entry_price, chain.underlying_current_price,
                     chain.shares, chain.share_entry_price, chain.share_current_price,
-                    active_val, chain.opened_date, chain.closed_date, deleted_val, chain.id
+                    active_val, chain.opened_date, chain.closed_date, deleted_val, parent_id_val, chain.id
                 ))
                 chain_id = chain.id
-                # Clear existing legs to re-insert updated legs
+                # Clear existing direct legs to re-insert updated legs
                 cursor.execute("DELETE FROM legs WHERE chain_id = ?", (chain_id,))
             else:
                 # Insert new chain header
                 cursor.execute("""
-                    INSERT INTO chains (symbol, name, underlying_entry_price, underlying_current_price, shares, share_entry_price, share_current_price, active, opened_date, closed_date, deleted)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO chains (symbol, name, underlying_entry_price, underlying_current_price, shares, share_entry_price, share_current_price, active, opened_date, closed_date, deleted, parent_chain_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     chain.symbol, chain.name, chain.underlying_entry_price, chain.underlying_current_price,
                     chain.shares, chain.share_entry_price, chain.share_current_price,
-                    active_val, chain.opened_date, chain.closed_date, deleted_val
+                    active_val, chain.opened_date, chain.closed_date, deleted_val, parent_id_val
                 ))
                 chain_id = cursor.lastrowid
                 chain.id = chain_id
 
-            # Insert legs
+            # Insert legs (skip legs belonging to child chains)
             for leg in chain.legs:
+                if getattr(leg, 'is_child', False):
+                    continue
                 leg_deleted = 1 if getattr(leg, 'deleted', False) else 0
                 cursor.execute("""
                     INSERT OR REPLACE INTO legs (chain_id, strike, option_type, side, quantity, entry_price, current_price, expiration_date, multiplier, action, trade_date, commission, fees, occ_symbol, tx_hash, deleted)
@@ -174,8 +182,8 @@ class ChainStorage:
             conn.commit()
             return chain_id
 
-    def get_chain(self, chain_id: int) -> Optional[OptionsChain]:
-        """Retrieves a chain by ID."""
+    def get_chain(self, chain_id: int, include_children: bool = True) -> Optional[OptionsChain]:
+        """Retrieves a chain by ID, optionally including legs from child chains."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM chains WHERE id = ?", (chain_id,))
@@ -185,6 +193,14 @@ class ChainStorage:
 
             active_bool = bool(row['active']) if row['active'] is not None else True
             deleted_bool = bool(row['deleted']) if 'deleted' in row.keys() and row['deleted'] is not None else False
+            parent_id = row['parent_chain_id'] if 'parent_chain_id' in row.keys() else None
+
+            # Fetch any active child chain IDs
+            cursor.execute(
+                "SELECT id FROM chains WHERE parent_chain_id = ? AND (deleted = 0 OR deleted IS NULL)", 
+                (chain_id,)
+            )
+            child_ids = [r['id'] for r in cursor.fetchall()]
 
             chain = OptionsChain(
                 id=row['id'],
@@ -198,9 +214,12 @@ class ChainStorage:
                 active=active_bool,
                 opened_date=row['opened_date'],
                 closed_date=row['closed_date'],
-                deleted=deleted_bool
+                deleted=deleted_bool,
+                parent_chain_id=parent_id,
+                child_chain_ids=child_ids
             )
 
+            # Direct legs
             cursor.execute("SELECT * FROM legs WHERE chain_id = ?", (chain_id,))
             for leg_row in cursor.fetchall():
                 leg_deleted = bool(leg_row['deleted']) if 'deleted' in leg_row.keys() and leg_row['deleted'] is not None else False
@@ -220,9 +239,39 @@ class ChainStorage:
                     fees=leg_row['fees'] or 0.0,
                     occ_symbol=leg_row['occ_symbol'],
                     tx_hash=leg_row['tx_hash'],
-                    deleted=leg_deleted
+                    deleted=leg_deleted,
+                    source_chain_id=chain_id,
+                    is_child=False
                 )
                 chain.add_leg(leg)
+
+            # Child legs (if include_children is True)
+            if include_children and child_ids:
+                for cid in child_ids:
+                    cursor.execute("SELECT * FROM legs WHERE chain_id = ?", (cid,))
+                    for leg_row in cursor.fetchall():
+                        leg_deleted = bool(leg_row['deleted']) if 'deleted' in leg_row.keys() and leg_row['deleted'] is not None else False
+                        leg = OptionLeg(
+                            id=leg_row['id'],
+                            strike=leg_row['strike'],
+                            option_type=OptionType(leg_row['option_type']),
+                            side=OptionSide(leg_row['side']),
+                            quantity=leg_row['quantity'],
+                            entry_price=leg_row['entry_price'],
+                            current_price=leg_row['current_price'],
+                            expiration_date=leg_row['expiration_date'],
+                            multiplier=leg_row['multiplier'],
+                            action=leg_row['action'],
+                            trade_date=leg_row['trade_date'],
+                            commission=leg_row['commission'] or 0.0,
+                            fees=leg_row['fees'] or 0.0,
+                            occ_symbol=leg_row['occ_symbol'],
+                            tx_hash=leg_row['tx_hash'],
+                            deleted=leg_deleted,
+                            source_chain_id=cid,
+                            is_child=True
+                        )
+                        chain.add_leg(leg)
 
             return chain
 
@@ -291,7 +340,7 @@ class ChainStorage:
             where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
             query = f"""
-                SELECT c.id, c.symbol, c.name, c.active, c.opened_date, c.closed_date, c.deleted, c.created_at, COUNT(l.id) as leg_count
+                SELECT c.id, c.symbol, c.name, c.active, c.opened_date, c.closed_date, c.deleted, c.parent_chain_id, c.created_at, COUNT(l.id) as leg_count
                 FROM chains c
                 LEFT JOIN legs l ON c.id = l.chain_id
                 {where_sql}
@@ -300,7 +349,127 @@ class ChainStorage:
                 ORDER BY c.created_at DESC
             """
             cursor.execute(query)
-            return [dict(r) for r in cursor.fetchall()]
+            chains_meta = [dict(r) for r in cursor.fetchall()]
+
+            # Collect child_chain_ids mapping
+            cursor.execute(
+                "SELECT id, parent_chain_id FROM chains WHERE parent_chain_id IS NOT NULL AND (deleted = 0 OR deleted IS NULL)"
+            )
+            parent_to_children: Dict[int, List[int]] = {}
+            for r in cursor.fetchall():
+                pid = r['parent_chain_id']
+                parent_to_children.setdefault(pid, []).append(r['id'])
+
+            for m in chains_meta:
+                m['child_chain_ids'] = parent_to_children.get(m['id'], [])
+
+            return chains_meta
+
+    def join_chain(self, child_id: int, parent_id: int) -> Tuple[bool, str]:
+        """
+        Manually joins a child chain to a parent chain.
+        - Validates existence, deleted status, self-join, cycle, and matching symbol.
+        - Sets child.parent_chain_id = parent_id.
+        - Recalculates parent status (active/closed, opened_date).
+        Returns (success, message).
+        """
+        from .activity_parser import ActivityParser
+
+        if child_id == parent_id:
+            return False, "A position cannot be joined to itself."
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, symbol, active, deleted, parent_chain_id FROM chains WHERE id = ?", (child_id,))
+            child_row = cursor.fetchone()
+            if not child_row:
+                return False, f"Position #{child_id} not found."
+
+            cursor.execute("SELECT id, symbol, active, deleted, parent_chain_id FROM chains WHERE id = ?", (parent_id,))
+            parent_row = cursor.fetchone()
+            if not parent_row:
+                return False, f"Parent position #{parent_id} not found."
+
+            if bool(child_row['deleted']) or bool(parent_row['deleted']):
+                return False, "Cannot join deleted positions."
+
+            if (child_row['symbol'] or '').upper() != (parent_row['symbol'] or '').upper():
+                return False, f"Symbol mismatch: #{child_id} ({child_row['symbol']}) cannot join #{parent_id} ({parent_row['symbol']})."
+
+            # Cycle detection: traverse parent hierarchy of parent_id
+            curr_pid = parent_row['parent_chain_id']
+            while curr_pid:
+                if curr_pid == child_id:
+                    return False, "Cannot join: circular hierarchy detected."
+                cursor.execute("SELECT parent_chain_id FROM chains WHERE id = ?", (curr_pid,))
+                r = cursor.fetchone()
+                curr_pid = r['parent_chain_id'] if r else None
+
+            # Update child
+            cursor.execute("UPDATE chains SET parent_chain_id = ? WHERE id = ?", (parent_id, child_id))
+            conn.commit()
+
+        # Recalculate parent chain status
+        parent_chain = self.get_chain(parent_id, include_children=True)
+        if parent_chain:
+            is_active = ActivityParser.is_chain_active(parent_chain)
+            dates = [l.trade_date for l in parent_chain.legs if l.trade_date]
+            min_date = min(dates) if dates else parent_chain.opened_date
+            latest_close = None
+            if not is_active:
+                close_dates = [l.trade_date for l in parent_chain.legs if l.trade_date and "CLOSE" in (l.action or "")]
+                latest_close = max(close_dates) if close_dates else parent_chain.closed_date
+
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE chains 
+                    SET active = ?, opened_date = ?, closed_date = ?
+                    WHERE id = ?
+                """, (1 if is_active else 0, min_date, latest_close, parent_id))
+                conn.commit()
+
+        return True, f"Position #{child_id} successfully joined to Parent #{parent_id}."
+
+    def unjoin_chain(self, child_id: int) -> Tuple[bool, str]:
+        """
+        Detaches a child chain from its parent chain.
+        Returns (success, message).
+        """
+        from .activity_parser import ActivityParser
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, parent_chain_id FROM chains WHERE id = ?", (child_id,))
+            child_row = cursor.fetchone()
+            if not child_row or not child_row['parent_chain_id']:
+                return False, f"Position #{child_id} is not joined to any parent."
+
+            parent_id = child_row['parent_chain_id']
+            cursor.execute("UPDATE chains SET parent_chain_id = NULL WHERE id = ?", (child_id,))
+            conn.commit()
+
+        # Recalculate both chains
+        for cid in (parent_id, child_id):
+            ch = self.get_chain(cid, include_children=True)
+            if ch:
+                is_active = ActivityParser.is_chain_active(ch)
+                dates = [l.trade_date for l in ch.legs if l.trade_date]
+                min_date = min(dates) if dates else ch.opened_date
+                latest_close = None
+                if not is_active:
+                    close_dates = [l.trade_date for l in ch.legs if l.trade_date and "CLOSE" in (l.action or "")]
+                    latest_close = max(close_dates) if close_dates else ch.closed_date
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE chains 
+                        SET active = ?, opened_date = ?, closed_date = ?
+                        WHERE id = ?
+                    """, (1 if is_active else 0, min_date, latest_close, cid))
+                    conn.commit()
+
+        return True, f"Position #{child_id} detached from Parent #{parent_id}."
 
     def clean_empty_chains(self) -> int:
         """Removes any orphaned chains from the database that have 0 associated legs."""
@@ -381,7 +550,8 @@ class ChainStorage:
                     l.id, l.chain_id, l.strike, l.option_type, l.side, l.quantity,
                     l.entry_price, l.current_price, l.expiration_date, l.multiplier, l.action,
                     l.trade_date, l.commission, l.fees, l.occ_symbol, l.deleted as leg_deleted,
-                    c.symbol, c.name as chain_name, c.active as chain_active, c.deleted as chain_deleted
+                    c.symbol, c.name as chain_name, c.active as chain_active, c.deleted as chain_deleted,
+                    c.parent_chain_id
                 FROM legs l
                 JOIN chains c ON l.chain_id = c.id
                 ORDER BY l.trade_date DESC, l.id DESC
@@ -459,7 +629,8 @@ class ChainStorage:
                 "occ_symbol": row['occ_symbol'],
                 "outlay": outlay,
                 "status": leg_status,
-                "deleted": is_deleted
+                "deleted": is_deleted,
+                "parent_chain_id": row['parent_chain_id']
             }
             positions.append(pos)
 

@@ -152,7 +152,20 @@
               {% endif %}
             </td>
             <td class="px-4 py-3.5 font-bold text-white text-base">{{ c.symbol }}</td>
-            <td class="px-4 py-3.5 font-medium text-slate-200">{{ c.name }}</td>
+            <td class="px-4 py-3.5 font-medium text-slate-200">
+              <div class="flex items-center gap-2">
+                <span>{{ c.name }}</span>
+                {% if c.parent_chain_id %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                  Child of #{{ c.parent_chain_id }}
+                </span>
+                {% elif c.child_chain_ids and c.child_chain_ids|length > 0 %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40" title="Arranged with child position(s)">
+                  Parent ({{ c.child_chain_ids|length }} {% if c.child_chain_ids|length == 1 %}child{% else %}children{% endif %}: #{{ c.child_chain_ids|join(', #') }})
+                </span>
+                {% endif %}
+              </div>
+            </td>
             <td class="px-4 py-3.5 font-mono text-xs text-slate-400">{{ c.opened_date or '-' }}</td>
             <td class="px-4 py-3.5 font-mono text-xs text-slate-400">
               {% if c.active and not c.deleted %}<span class="text-emerald-400 font-medium">Open</span>{% else %}{{ c.closed_date or '-' }}{% endif %}
@@ -173,13 +186,25 @@
               {% endif %}
             </td>
             <td class="px-4 py-3.5 text-center" onclick="event.stopPropagation()">
-              <div class="flex items-center justify-center gap-2">
+              <div class="flex items-center justify-center gap-1.5">
                 {% if c.deleted %}
                 <!-- Revert Button: Icon Only -->
                 <button onclick="revertChain({{ c.id }}, event)" class="p-1.5 text-xs font-semibold rounded-lg bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/40 transition shadow-sm" title="Revert Chain">
                   ↩️
                 </button>
                 {% else %}
+                  {% if c.parent_chain_id %}
+                  <!-- Unjoin Button -->
+                  <button onclick="unjoinChain({{ c.id }}, {{ c.parent_chain_id }}, event)" class="px-2 py-1 text-xs font-semibold rounded-lg bg-indigo-900/50 hover:bg-indigo-700 text-indigo-300 hover:text-white border border-indigo-500/40 transition shadow-sm inline-flex items-center gap-1" title="Detach from Parent #{{ c.parent_chain_id }}">
+                    <span>⛓️‍💥</span> Unjoin
+                  </button>
+                  {% else %}
+                  <!-- Join Button -->
+                  <button onclick="openJoinModal({{ c.id }}, '{{ c.symbol }}', event)" class="px-2 py-1 text-xs font-semibold rounded-lg bg-slate-700/70 hover:bg-indigo-600 text-slate-200 hover:text-white border border-slate-600 hover:border-indigo-500/50 transition shadow-sm inline-flex items-center gap-1" title="Join into existing parent position">
+                    <span>🔗</span> Join
+                  </button>
+                  {% endif %}
+
                 <!-- Delete Button: Icon Only -->
                 <button onclick="deleteChain({{ c.id }}, event)" class="p-1.5 text-xs font-medium rounded-lg bg-rose-500/10 hover:bg-rose-500/30 text-rose-400 hover:text-rose-200 border border-rose-500/20 transition" title="Delete Chain">
                   🗑️
@@ -230,6 +255,11 @@
                       <tr class="hover:bg-slate-700/20">
                         <td class="px-3 py-2 font-mono font-medium {% if 'OPEN' in (leg.action or '') %}text-indigo-400{% else %}text-amber-400{% endif %}">
                           {{ leg.action or '-' }}
+                          {% if leg.is_child %}
+                          <span class="ml-1 text-[9px] px-1.5 py-0.5 rounded bg-purple-900/60 text-purple-300 border border-purple-700/60 font-sans" title="Joined from Child Chain #{{ leg.source_chain_id }}">
+                            From #{{ leg.source_chain_id }}
+                          </span>
+                          {% endif %}
                         </td>
                         <td class="px-3 py-2">
                           <span class="px-1.5 py-0.5 rounded font-bold text-[10px] {% if leg.side == 'BUY' %}bg-blue-500/20 text-blue-400{% else %}bg-purple-500/20 text-purple-400{% endif %}">
@@ -354,8 +384,13 @@
               {% endif %}
             </td>
             <td class="px-3 py-3 font-bold text-white text-base">{{ p.symbol }}</td>
-            <td class="px-3 py-3 font-medium text-xs text-slate-300 max-w-[160px] truncate" title="{{ p.chain_name }}">
+            <td class="px-3 py-3 font-medium text-xs text-slate-300 max-w-[180px] truncate" title="{{ p.chain_name }}">
               {{ p.chain_name }}
+              {% if p.parent_chain_id %}
+              <span class="inline-flex items-center ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                Child of #{{ p.parent_chain_id }}
+              </span>
+              {% endif %}
             </td>
             <td class="px-3 py-3 font-mono text-xs font-medium {% if 'OPEN' in (p.action or '') %}text-indigo-400{% else %}text-amber-400{% endif %}">
               {{ p.action or '-' }}
@@ -406,6 +441,30 @@
     </div>
   </div>
   {% endif %}
+
+  <!-- Join Position/Chain Modal -->
+  <div id="joinModal" class="hidden fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold text-white flex items-center gap-2">
+          <span>🔗</span> Join Position into Parent Chain
+        </h3>
+        <button onclick="closeJoinModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+      </div>
+      <p class="text-xs text-slate-300">
+        Join position <span id="modalChildBadge" class="font-mono font-bold text-indigo-300">#---</span> (<span id="modalChildSymbol" class="font-bold text-white"></span>) into an existing parent chain of the same symbol to arrange a combined multi-leg strategy.
+      </p>
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 mb-1">Parent Position / Chain ID</label>
+        <input type="number" id="modalParentId" placeholder="e.g. 149" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
+      </div>
+      <div id="joinModalError" class="hidden text-xs text-rose-400 font-medium"></div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button onclick="closeJoinModal()" class="px-3.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-medium text-slate-300 transition">Cancel</button>
+        <button onclick="submitJoinModal()" id="joinModalSubmitBtn" class="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white shadow transition">Join Chain</button>
+      </div>
+    </div>
+  </div>
 
 </div>
 {% endblock %}
@@ -505,6 +564,85 @@ async function revertLeg(legId, event) {
       setTimeout(() => location.reload(), 500);
     } else {
       showBanner(data.error || "Failed to revert position", false);
+    }
+  } catch (err) {
+    showBanner(`Network error: ${err.message}`, false);
+  }
+}
+
+// Join / Unjoin Chain Actions
+let currentJoinChildId = null;
+
+function openJoinModal(chainId, symbol, event) {
+  if (event) event.stopPropagation();
+  currentJoinChildId = chainId;
+  document.getElementById("modalChildBadge").textContent = `#${chainId}`;
+  document.getElementById("modalChildSymbol").textContent = symbol;
+  document.getElementById("modalParentId").value = "";
+  const errEl = document.getElementById("joinModalError");
+  errEl.classList.add("hidden");
+  errEl.textContent = "";
+  document.getElementById("joinModal").classList.remove("hidden");
+  setTimeout(() => document.getElementById("modalParentId").focus(), 100);
+}
+
+function closeJoinModal() {
+  currentJoinChildId = null;
+  document.getElementById("joinModal").classList.add("hidden");
+}
+
+async function submitJoinModal() {
+  if (!currentJoinChildId) return;
+  const parentIdVal = document.getElementById("modalParentId").value.trim();
+  const errEl = document.getElementById("joinModalError");
+  if (!parentIdVal) {
+    errEl.textContent = "Please enter a valid Parent Chain ID.";
+    errEl.classList.remove("hidden");
+    return;
+  }
+
+  const submitBtn = document.getElementById("joinModalSubmitBtn");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Joining...";
+
+  try {
+    const res = await fetch(`/api/chains/${currentJoinChildId}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parent_id: parseInt(parentIdVal, 10) })
+    });
+    const data = await res.json();
+    if (data.success) {
+      closeJoinModal();
+      showBanner(data.message || `Joined position #${currentJoinChildId} to #${parentIdVal}.`);
+      setTimeout(() => location.reload(), 500);
+    } else {
+      errEl.textContent = data.error || "Failed to join chain.";
+      errEl.classList.remove("hidden");
+    }
+  } catch (err) {
+    errEl.textContent = `Network error: ${err.message}`;
+    errEl.classList.remove("hidden");
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Join Chain";
+  }
+}
+
+async function unjoinChain(childId, parentId, event) {
+  if (event) event.stopPropagation();
+  if (!confirm(`Are you sure you want to detach position #${childId} from Parent #${parentId}? Both will become separate chains again.`)) {
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/chains/${childId}/unjoin`, { method: "POST" });
+    const data = await res.json();
+    if (data.success) {
+      showBanner(data.message || `Position #${childId} detached from Parent #${parentId}.`);
+      setTimeout(() => location.reload(), 500);
+    } else {
+      showBanner(data.error || "Failed to unjoin position", false);
     }
   } catch (err) {
     showBanner(`Network error: ${err.message}`, false);
