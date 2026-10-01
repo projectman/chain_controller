@@ -153,16 +153,24 @@
             </td>
             <td class="px-4 py-3.5 font-bold text-white text-base">{{ c.symbol }}</td>
             <td class="px-4 py-3.5 font-medium text-slate-200">
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <span>{{ c.name }}</span>
                 {% if c.parent_chain_id %}
-                <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
-                  Child of #{{ c.parent_chain_id }}
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                  <span>Child of #{{ c.parent_chain_id }}</span>
+                  <button onclick="unjoinChain({{ c.id }}, {{ c.parent_chain_id }}, event)" class="text-rose-400 hover:text-rose-200 hover:underline font-normal text-[10px] pl-1 border-l border-indigo-500/40 transition">
+                    Unjoin
+                  </button>
                 </span>
                 {% elif c.child_chain_ids and c.child_chain_ids|length > 0 %}
-                <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40" title="Arranged with child position(s)">
-                  Parent ({{ c.child_chain_ids|length }} {% if c.child_chain_ids|length == 1 %}child{% else %}children{% endif %}: #{{ c.child_chain_ids|join(', #') }})
-                </span>
+                  {% for child_id in c.child_chain_ids %}
+                  <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-sm" title="Manually joined position">
+                    <span>🔗 Joined: #{{ child_id }}</span>
+                    <button onclick="unjoinChain({{ child_id }}, {{ c.id }}, event)" class="text-rose-400 hover:text-rose-200 hover:underline font-normal text-[10px] pl-1 border-l border-purple-500/40 transition" title="Detach #{{ child_id }}">
+                      Unjoin
+                    </button>
+                  </span>
+                  {% endfor %}
                 {% endif %}
               </div>
             </td>
@@ -225,9 +233,21 @@
           <tr id="details-{{ c.id }}" class="hidden bg-slate-900/60 border-t border-b border-slate-700/60">
             <td colspan="10" class="px-6 py-4">
               <div class="bg-slate-800/80 rounded-lg p-4 border border-slate-700/60 space-y-3">
-                <div class="flex items-center justify-between">
+                <div class="flex items-center justify-between flex-wrap gap-2">
                   <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Option Legs Breakdown</span>
-                  <div class="text-xs text-slate-400">
+                  <div class="text-xs text-slate-400 flex items-center gap-2 flex-wrap">
+                    {% if c.child_chain_ids and c.child_chain_ids|length > 0 %}
+                    <span class="text-purple-300">
+                      Joined Positions:
+                      {% for child_id in c.child_chain_ids %}
+                      <strong class="font-mono text-purple-200">#{{ child_id }}</strong>
+                      <button onclick="unjoinChain({{ child_id }}, {{ c.id }}, event)" class="ml-0.5 px-1.5 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 hover:text-white border border-rose-500/30 text-[10px] font-semibold transition" title="Detach position #{{ child_id }}">
+                        Unjoin #{{ child_id }}
+                      </button>
+                      {% endfor %}
+                    </span>
+                    &bull;
+                    {% endif %}
                     Commissions & Fees: <strong class="text-slate-200 font-mono">${{ "%.2f"|format(c.commissions_and_fees) }}</strong>
                     {% if c.breakeven_points %}
                     &bull; Breakeven: <strong class="text-indigo-400 font-mono">${{ c.breakeven_points|join(', $') }}</strong>

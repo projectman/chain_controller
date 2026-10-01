@@ -147,11 +147,12 @@ def test_join_chain_api_endpoints(join_setup):
     data = res.get_json()
     assert data["success"] is True
 
-    # Check /chains HTML has Child badge and Unjoin button
+    # Check /chains HTML: Child chain id2 is absorbed into parent id1 (not a separate row)
     chains_res = client.get("/chains")
     html = chains_res.get_data(as_text=True)
-    assert f"Child of #{id1}" in html
-    assert f"Parent (1 child: #{id2})" in html
+    assert f'id="row-{id1}"' in html
+    assert f'id="row-{id2}"' not in html  # Child is not displayed as separate row
+    assert f"Joined: #{id2}" in html  # Parent shows joined badge
     assert f"unjoinChain({id2}, {id1}" in html
 
     # 2. Check no double-counting in totals
@@ -168,8 +169,10 @@ def test_join_chain_api_endpoints(join_setup):
     unjoin_data = unjoin_res.get_json()
     assert unjoin_data["success"] is True
 
-    # Check /chains HTML after unjoin
+    # Check /chains HTML after unjoin: both appear as separate rows
     chains_after = client.get("/chains")
     html_after = chains_after.get_data(as_text=True)
-    assert f"Child of #{id1}" not in html_after
-    assert f"Parent (1 child: #{id2})" not in html_after
+    assert f'id="row-{id1}"' in html_after
+    assert f'id="row-{id2}"' in html_after
+    assert f"Joined: #{id2}" not in html_after
+

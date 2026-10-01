@@ -319,14 +319,24 @@ class ChainStorage:
                 return chain
         return None
 
-    def list_chains(self, include_deleted: bool = False, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_chains(
+        self, 
+        include_deleted: bool = False, 
+        status: Optional[str] = None,
+        root_only: bool = True
+    ) -> List[Dict[str, Any]]:
         """
         Lists summary metadata of saved options chains.
         Supports status filtering: 'all' (non-deleted), 'active', 'closed', 'deleted'.
+        If root_only is True (default), child chains (joined into another chain)
+        are excluded from top-level results as their legs are included in the parent chain.
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             where_clauses = []
+
+            if root_only and status != "deleted":
+                where_clauses.append("(c.parent_chain_id IS NULL)")
 
             if status == "deleted":
                 where_clauses.append("c.deleted = 1")
@@ -340,12 +350,13 @@ class ChainStorage:
             where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
             query = f"""
-                SELECT c.id, c.symbol, c.name, c.active, c.opened_date, c.closed_date, c.deleted, c.parent_chain_id, c.created_at, COUNT(l.id) as leg_count
+                SELECT c.id, c.symbol, c.name, c.active, c.opened_date, c.closed_date, c.deleted, c.parent_chain_id, c.created_at,
+                       COUNT(DISTINCT l.id) as leg_count
                 FROM chains c
-                LEFT JOIN legs l ON c.id = l.chain_id
+                LEFT JOIN legs l ON (c.id = l.chain_id OR l.chain_id IN (SELECT id FROM chains WHERE parent_chain_id = c.id))
                 {where_sql}
                 GROUP BY c.id
-                HAVING COUNT(l.id) > 0
+                HAVING COUNT(DISTINCT l.id) > 0
                 ORDER BY c.created_at DESC
             """
             cursor.execute(query)
