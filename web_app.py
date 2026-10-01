@@ -2,7 +2,7 @@ import os
 import argparse
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, render_template, request, jsonify, redirect, url_for, Response
 
 from options_chain.storage import ChainStorage
 from options_chain.models import OptionsChain, OptionLeg
@@ -92,6 +92,8 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
         total_legs_count = sum(len(c["legs"]) for c in formatted_chains)
         total_net_outlay = sum(c["net_outlay"] for c in formatted_chains)
 
+        import_logs = storage.list_import_logs(limit=20)
+
         return render_template(
             "import_report.html",
             active_page="import",
@@ -99,7 +101,8 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
             available_dates=sorted_dates,
             chains=formatted_chains,
             total_legs_count=total_legs_count,
-            total_net_outlay=total_net_outlay
+            total_net_outlay=total_net_outlay,
+            import_logs=import_logs
         )
 
     @app.route("/api/run-import", methods=["POST"])
@@ -115,6 +118,26 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
             })
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/import-logs/<int:log_id>", methods=["GET"])
+    def api_get_import_log(log_id: int):
+        log = storage.get_import_log(log_id)
+        if not log:
+            return jsonify({"success": False, "error": "Import log not found"}), 404
+        return jsonify({"success": True, "log": log})
+
+    @app.route("/api/import-logs/<int:log_id>/download", methods=["GET"])
+    def api_download_import_log(log_id: int):
+        log = storage.get_import_log(log_id)
+        if not log or not log.get("raw_content"):
+            return jsonify({"success": False, "error": "Import log or file content not found"}), 404
+        fname = log.get("filename", f"import_{log_id}.csv")
+        return Response(
+            log["raw_content"],
+            mimetype="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={fname}"}
+        )
+
 
     @app.route("/api/chains/<int:chain_id>/delete", methods=["POST"])
     def api_delete_chain(chain_id: int):

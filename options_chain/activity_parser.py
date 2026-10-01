@@ -66,6 +66,9 @@ class ActivityParser:
             raise FileNotFoundError(f"Activity CSV file not found: {filepath}")
 
         legs = []
+        from collections import defaultdict
+        occ_counter = defaultdict(int)
+
         with open(filepath, mode='r', encoding='utf-8-sig', errors='replace') as f:
             reader = csv.reader(f)
             header_found = False
@@ -156,6 +159,11 @@ class ActivityParser:
                 except ValueError:
                     continue
 
+                # Differentiate multiple identical executions in the same file
+                sig = f"{trade_date}|{occ_info['occ_symbol']}|{action.value}|{qty}|{price:.4f}|{comm_val:.4f}|{fees_val:.4f}"
+                occ_counter[sig] += 1
+                occ_num = occ_counter[sig]
+
                 leg = OptionLeg(
                     strike=occ_info["strike"],
                     option_type=occ_info["option_type"],
@@ -168,7 +176,8 @@ class ActivityParser:
                     trade_date=trade_date,
                     commission=comm_val,
                     fees=fees_val,
-                    occ_symbol=occ_info["occ_symbol"]
+                    occ_symbol=occ_info["occ_symbol"],
+                    occurrence=occ_num
                 )
                 legs.append(leg)
 
@@ -221,14 +230,19 @@ class ActivityParser:
         Groups legs by same-day underlying for opening trades and rolls,
         and matches closing trades to active chains.
         """
-        # Deduplicate legs by tx_hash
-        unique_legs_map: Dict[str, OptionLeg] = {}
+        # Deduplicate legs by tx_hash (preserves distinct occurrences within file, deduplicates across files)
+        unique_legs: List[OptionLeg] = []
+        seen_hashes: Set[str] = set()
         for leg in legs:
             if leg.tx_hash:
-                unique_legs_map[leg.tx_hash] = leg
+                if leg.tx_hash not in seen_hashes:
+                    seen_hashes.add(leg.tx_hash)
+                    unique_legs.append(leg)
+            else:
+                unique_legs.append(leg)
 
         sorted_legs = sorted(
-            unique_legs_map.values(),
+            unique_legs,
             key=lambda l: (l.trade_date or "", 0 if "CLOSE" in (l.action or "") else 1)
         )
 
@@ -344,7 +358,7 @@ class ActivityParser:
         """
         Scans sources directory for Activity*.csv files, deduplicates transactions via SHA-256 tx_hash,
         groups same-day opening trades by underlying, matches closing trades to active chains,
-        and updates SQLite storage.
+        archives imported files, logs imports to SQLite for validation, and updates storage.
         """
         if not os.path.exists(sources_dir):
             return {"processed_files": 0, "new_legs": 0, "skipped_duplicates": 0, "chains": []}
@@ -354,9 +368,11 @@ class ActivityParser:
         if not files:
             return {"processed_files": 0, "new_legs": 0, "skipped_duplicates": 0, "chains": []}
 
-        all_legs: List[OptionLeg] = []
-        for f in files:
-            all_legs.extend(cls.extract_transactions_from_csv(f))
+        import hashlib
+        import shutil
+
+        archive_dir = os.path.join(sources_dir, "archive")
+        os.makedirs(archive_dir, exist_ok=True)
 
         existing_hashes: Set[str] = set()
         existing_chains: List[OptionsChain] = []
@@ -369,9 +385,47 @@ class ActivityParser:
                     if loaded:
                         existing_chains.append(loaded)
 
-        # Count new legs vs duplicates
-        new_legs_count = sum(1 for l in all_legs if l.tx_hash and l.tx_hash not in existing_hashes)
-        skipped_duplicates_count = sum(1 for l in all_legs if l.tx_hash and l.tx_hash in existing_hashes)
+        all_legs: List[OptionLeg] = []
+        total_new_legs = 0
+        total_skipped_duplicates = 0
+
+        for f in files:
+            file_legs = cls.extract_transactions_from_csv(f)
+            all_legs.extend(file_legs)
+
+            # Per-file metrics
+            file_new = sum(1 for l in file_legs if l.tx_hash and l.tx_hash not in existing_hashes)
+            file_skipped = sum(1 for l in file_legs if l.tx_hash and l.tx_hash in existing_hashes)
+            total_new_legs += file_new
+            total_skipped_duplicates += file_skipped
+
+            if storage:
+                try:
+                    with open(f, "r", encoding="utf-8-sig", errors="replace") as rf:
+                        raw_data = rf.read()
+                    file_sha = hashlib.sha256(raw_data.encode("utf-8")).hexdigest()
+                    file_size = os.path.getsize(f)
+                    row_cnt = len([line for line in raw_data.splitlines() if line.strip()])
+
+                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    ts_filename = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{os.path.basename(f)}"
+                    archive_path = os.path.join(archive_dir, ts_filename)
+                    shutil.copy2(f, archive_path)
+
+                    summary_msg = f"Imported {file_new} new legs, skipped {file_skipped} duplicates."
+                    storage.record_import_log(
+                        filename=os.path.basename(f),
+                        file_sha256=file_sha,
+                        file_size=file_size,
+                        total_rows=row_cnt,
+                        new_legs=file_new,
+                        skipped_duplicates=file_skipped,
+                        raw_content=raw_data,
+                        summary=summary_msg,
+                        imported_at=now_str
+                    )
+                except Exception as log_err:
+                    print(f"Warning: Failed to record import log for {f}: {log_err}")
 
         # Build and match chains
         resolved_chains = cls.build_chains_from_legs(all_legs, existing_chains=existing_chains)
@@ -391,7 +445,7 @@ class ActivityParser:
 
         return {
             "processed_files": len(files),
-            "new_legs": new_legs_count,
-            "skipped_duplicates": skipped_duplicates_count,
+            "new_legs": total_new_legs,
+            "skipped_duplicates": total_skipped_duplicates,
             "chains": resolved_chains
         }

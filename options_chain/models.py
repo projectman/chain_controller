@@ -41,6 +41,7 @@ class OptionLeg:
     id: Optional[int] = None
     source_chain_id: Optional[int] = None
     is_child: bool = False
+    occurrence: int = 1
 
     def __post_init__(self):
         if self.current_price is None:
@@ -54,7 +55,7 @@ class OptionLeg:
 
     def compute_tx_hash(self) -> str:
         """Generates a deterministic SHA-256 fingerprint for transaction deduplication."""
-        raw_str = (
+        base_str = (
             f"{self.trade_date or ''}|"
             f"{self.occ_symbol or self.option_type.value + str(self.strike)}|"
             f"{self.action or self.side.value}|"
@@ -63,6 +64,10 @@ class OptionLeg:
             f"{self.commission:.4f}|"
             f"{self.fees:.4f}"
         )
+        if self.occurrence > 1:
+            raw_str = f"{base_str}|occ_{self.occurrence}"
+        else:
+            raw_str = base_str
         return hashlib.sha256(raw_str.encode('utf-8')).hexdigest()
 
     @property

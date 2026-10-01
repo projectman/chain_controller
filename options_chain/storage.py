@@ -2,6 +2,7 @@ import sqlite3
 import csv
 import os
 from contextlib import contextmanager
+from datetime import datetime
 from typing import List, Optional, Dict, Any, Set, Tuple
 from .models import OptionsChain, OptionLeg, OptionType, OptionSide
 
@@ -107,7 +108,24 @@ class ChainStorage:
                 ON legs(tx_hash) WHERE tx_hash IS NOT NULL;
             """)
 
+            # Table for logging imported files and preserving data for validation
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS import_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    imported_at TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    file_sha256 TEXT NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    total_rows INTEGER NOT NULL,
+                    new_legs INTEGER NOT NULL,
+                    skipped_duplicates INTEGER NOT NULL,
+                    raw_content TEXT,
+                    summary TEXT
+                );
+            """)
+
             conn.commit()
+
 
     def get_existing_tx_hashes(self) -> Set[str]:
         """Returns a set of all transaction hashes currently saved in SQLite database."""
@@ -115,6 +133,50 @@ class ChainStorage:
             cursor = conn.cursor()
             cursor.execute("SELECT tx_hash FROM legs WHERE tx_hash IS NOT NULL")
             return {row['tx_hash'] for row in cursor.fetchall()}
+
+    def record_import_log(
+        self,
+        filename: str,
+        file_sha256: str,
+        file_size: int,
+        total_rows: int,
+        new_legs: int,
+        skipped_duplicates: int,
+        raw_content: str,
+        summary: str = "",
+        imported_at: Optional[str] = None
+    ) -> int:
+        """Records an imported file's metadata and raw content for validation."""
+        if not imported_at:
+            imported_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO import_logs (imported_at, filename, file_sha256, file_size, total_rows, new_legs, skipped_duplicates, raw_content, summary)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (imported_at, filename, file_sha256, file_size, total_rows, new_legs, skipped_duplicates, raw_content, summary))
+            conn.commit()
+            return cursor.lastrowid
+
+    def list_import_logs(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Lists metadata of recent imports (excluding large raw_content for efficiency)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, imported_at, filename, file_sha256, file_size, total_rows, new_legs, skipped_duplicates, summary
+                FROM import_logs
+                ORDER BY id DESC
+                LIMIT ?
+            """, (limit,))
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_import_log(self, log_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieves full import log including raw file content."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM import_logs WHERE id = ?", (log_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     def save_chain(self, chain: OptionsChain) -> int:
         """Saves or updates an options chain in SQLite."""

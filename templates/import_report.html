@@ -172,6 +172,108 @@
 
   </div>
 
+  <!-- Import History & Data Validation Log -->
+  <div class="bg-slate-800/90 border border-slate-700/80 rounded-xl p-6 shadow-xl space-y-4">
+    <div class="flex items-center justify-between flex-wrap gap-2">
+      <div>
+        <h2 class="text-lg font-bold text-white flex items-center gap-2">
+          <span>📜</span> Import History & Data Validation Log
+        </h2>
+        <p class="text-xs text-slate-400 mt-0.5">
+          Audit trail of imported broker files with preserved data records for post-import validation.
+        </p>
+      </div>
+      <span class="text-xs font-mono text-slate-400 bg-slate-900/60 px-2.5 py-1 rounded border border-slate-700/60">
+        {{ import_logs|length if import_logs else 0 }} logged import(s)
+      </span>
+    </div>
+
+    {% if not import_logs %}
+    <div class="p-6 text-center text-slate-400 text-sm border border-dashed border-slate-700 rounded-lg">
+      No import logs recorded yet. Click <strong>"Run Import from sources/"</strong> to import and archive broker activity files.
+    </div>
+    {% else %}
+    <div class="overflow-x-auto rounded-lg border border-slate-700/60">
+      <table class="w-full text-left text-xs text-slate-300">
+        <thead class="bg-slate-900/80 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-700/80">
+          <tr>
+            <th class="px-4 py-3">Import Date / Time</th>
+            <th class="px-4 py-3">Filename</th>
+            <th class="px-4 py-3 text-right">Size</th>
+            <th class="px-4 py-3 text-center">CSV Rows</th>
+            <th class="px-4 py-3 text-center">New Legs</th>
+            <th class="px-4 py-3 text-center">Duplicates Skipped</th>
+            <th class="px-4 py-3 text-center">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-700/50 font-mono">
+          {% for log in import_logs %}
+          <tr class="hover:bg-slate-700/30 transition">
+            <td class="px-4 py-2.5 text-slate-300 whitespace-nowrap">{{ log.imported_at }}</td>
+            <td class="px-4 py-2.5 font-sans font-semibold text-white">
+              <span class="inline-flex items-center gap-1.5">
+                <span>📄</span> {{ log.filename }}
+              </span>
+            </td>
+            <td class="px-4 py-2.5 text-right text-slate-400">{{ "%.1f"|format(log.file_size / 1024) }} KB</td>
+            <td class="px-4 py-2.5 text-center text-slate-200">{{ log.total_rows }}</td>
+            <td class="px-4 py-2.5 text-center font-bold text-emerald-400">+{{ log.new_legs }}</td>
+            <td class="px-4 py-2.5 text-center text-slate-400">{{ log.skipped_duplicates }}</td>
+            <td class="px-4 py-2.5 text-center font-sans">
+              <div class="flex items-center justify-center gap-2">
+                <button onclick="viewImportData({{ log.id }}, '{{ log.filename }}')" class="px-2.5 py-1 text-xs rounded bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/40 transition inline-flex items-center gap-1 shadow-sm" title="View preserved file content">
+                  <span>🔍</span> View Data
+                </button>
+                <a href="/api/import-logs/{{ log.id }}/download" class="px-2.5 py-1 text-xs rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white border border-slate-600 transition inline-flex items-center gap-1 shadow-sm" title="Download original imported CSV">
+                  <span>⬇️</span> Download
+                </a>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+
+<!-- Data Validation Modal Dialog -->
+<div id="dataValidationModal" class="hidden fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+  <div class="bg-slate-800 border border-slate-700 rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+    <!-- Modal Header -->
+    <div class="p-4 border-b border-slate-700/80 flex items-center justify-between bg-slate-800/80">
+      <div class="flex items-center gap-2">
+        <span class="text-xl">📄</span>
+        <div>
+          <h3 id="modalFilename" class="text-base font-bold text-white">Imported File Data</h3>
+          <p id="modalMeta" class="text-xs text-slate-400">Preserved CSV content</p>
+        </div>
+      </div>
+      <button onclick="closeImportModal()" class="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700 transition">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+      </button>
+    </div>
+
+    <!-- Modal Content -->
+    <div class="p-4 overflow-y-auto flex-1 bg-slate-900/80">
+      <pre id="modalRawContent" class="text-xs font-mono text-slate-300 whitespace-pre overflow-x-auto p-4 bg-slate-950 rounded-lg border border-slate-800 selection:bg-indigo-700"></pre>
+    </div>
+
+    <!-- Modal Footer -->
+    <div class="p-3 border-t border-slate-700/80 flex items-center justify-between bg-slate-800/80 text-xs">
+      <span id="modalLineCount" class="text-slate-400 font-mono">0 lines</span>
+      <div class="flex items-center gap-2">
+        <button id="copyBtn" onclick="copyModalContent()" class="px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 hover:text-white transition inline-flex items-center gap-1 font-sans">
+          <span>📋</span> Copy Content
+        </button>
+        <button onclick="closeImportModal()" class="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition font-sans">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 {% endblock %}
 
@@ -216,5 +318,48 @@ async function runImport() {
     text.textContent = "Run Import from sources/";
   }
 }
+
+async function viewImportData(logId, filename) {
+  const modal = document.getElementById("dataValidationModal");
+  const modalFilename = document.getElementById("modalFilename");
+  const modalMeta = document.getElementById("modalMeta");
+  const modalContent = document.getElementById("modalRawContent");
+  const lineCount = document.getElementById("modalLineCount");
+
+  modalFilename.textContent = filename;
+  modalMeta.textContent = `Fetching log #${logId}...`;
+  modalContent.textContent = "Loading data...";
+  modal.classList.remove("hidden");
+
+  try {
+    const res = await fetch(`/api/import-logs/${logId}`);
+    const data = await res.json();
+    if (data.success && data.log) {
+      modalMeta.textContent = `Imported on ${data.log.imported_at} &bull; ${(data.log.file_size / 1024).toFixed(1)} KB &bull; SHA-256: ${data.log.file_sha256.substring(0, 16)}...`;
+      modalContent.textContent = data.log.raw_content || "(No raw content stored)";
+      const lines = (data.log.raw_content || "").split("\n").length;
+      lineCount.textContent = `${lines} lines &bull; ${data.log.total_rows} CSV data rows`;
+    } else {
+      modalContent.textContent = "Error: " + (data.error || "Failed to load log data.");
+    }
+  } catch (err) {
+    modalContent.textContent = "Network error: " + err.message;
+  }
+}
+
+function closeImportModal() {
+  document.getElementById("dataValidationModal").classList.add("hidden");
+}
+
+function copyModalContent() {
+  const content = document.getElementById("modalRawContent").textContent;
+  navigator.clipboard.writeText(content).then(() => {
+    const copyBtn = document.getElementById("copyBtn");
+    const orig = copyBtn.innerHTML;
+    copyBtn.innerHTML = "<span>✅</span> Copied!";
+    setTimeout(() => { copyBtn.innerHTML = orig; }, 1500);
+  });
+}
 </script>
 {% endblock %}
+

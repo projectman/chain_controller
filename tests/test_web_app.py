@@ -54,10 +54,15 @@ def client(tmp_path):
     ))
     storage.save_chain(c2)
 
-    app = create_app(db_path=db_file, sources_dir="sources")
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir(exist_ok=True)
+    app = create_app(db_path=db_file, sources_dir=str(sources_dir))
     app.config["TESTING"] = True
-    with app.test_client() as client:
-        yield client
+    with app.test_client() as c:
+        c.storage = storage
+        yield c
+
+
 
 
 def test_index_redirect(client):
@@ -209,4 +214,40 @@ def test_chains_footer_totals_by_status(client):
     assert "TOTALS (1 chain)" in html_active
     # AAPL Net Outlay is +$500.00
     assert "$500.00" in html_active
+
+
+def test_import_log_endpoints(client):
+    log_id = client.storage.record_import_log(
+        filename="Test_Activity.csv",
+        file_sha256="testsha256hash123",
+        file_size=1024,
+        total_rows=15,
+        new_legs=3,
+        skipped_duplicates=2,
+        raw_content="Date,Symbol,Action\n2026-09-30,HON,BUY_TO_OPEN",
+        summary="Imported 3 new legs, skipped 2 duplicates."
+    )
+
+    # 1. Check /import page renders the log table
+    import_page_res = client.get("/import")
+    assert import_page_res.status_code == 200
+    html = import_page_res.get_data(as_text=True)
+    assert "Test_Activity.csv" in html
+    assert "1.0 KB" in html
+
+    # 2. Check GET /api/import-logs/<id> returns json with raw_content
+    log_res = client.get(f"/api/import-logs/{log_id}")
+    assert log_res.status_code == 200
+    data = log_res.get_json()
+    assert data["success"] is True
+    assert data["log"]["filename"] == "Test_Activity.csv"
+    assert "2026-09-30,HON,BUY_TO_OPEN" in data["log"]["raw_content"]
+
+    # 3. Check GET /api/import-logs/<id>/download returns attachment
+    dl_res = client.get(f"/api/import-logs/{log_id}/download")
+    assert dl_res.status_code == 200
+    assert dl_res.mimetype == "text/csv"
+    assert "attachment" in dl_res.headers["Content-Disposition"]
+    assert "2026-09-30,HON,BUY_TO_OPEN" in dl_res.get_data(as_text=True)
+
 

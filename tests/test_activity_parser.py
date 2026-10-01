@@ -184,3 +184,73 @@ def test_same_day_underlying_grouping_and_position_interaction(tmp_path):
     # Verify no separate closing chain was created for ORCL
     assert storage.get_chain_by_name("ORCL 2026-08-04 Closing") is None
     assert storage.get_chain_by_name("ORCL 2026-08-17 Strategy") is None
+
+
+def test_multiple_similar_transactions_in_same_file_not_dropped(tmp_path):
+    """
+    Verifies that multiple similar BUY_TO_OPEN positions in the same file
+    (e.g., HON position #150 with two 1-contract orders at same strike/price)
+    are BOTH imported into the database and not incorrectly deduplicated.
+    """
+    db_file = str(tmp_path / "test_hon.db")
+    storage = ChainStorage(db_path=db_file)
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir()
+
+    # 2 separate identical BUY_TO_OPEN orders for HON on the same day
+    hon_csv = """Date,Activity Description,Symbol,Quantity,Price,Amount,Cash Balance,Description,Commission,Fees,Account
+Sep-21-2026,YOU BOUGHT OPENING TRANSACTION,HON261120P150,1,0.30,-30.66,"+10,000.00",PUT (HON) HONEYWELL NOV 20 26 $150 (100 SHS),0.65,0.01,MAIN BROKER *1319
+Sep-21-2026,YOU BOUGHT OPENING TRANSACTION,HON261120P150,1,0.30,-30.66,"+9,969.34",PUT (HON) HONEYWELL NOV 20 26 $150 (100 SHS),0.65,0.01,MAIN BROKER *1319
+"""
+    (sources_dir / "Activity_HON.csv").write_text(hon_csv)
+
+    # First import: both legs must be imported
+    res1 = ActivityParser.import_sources_folder(sources_dir=str(sources_dir), storage=storage)
+    assert res1["new_legs"] == 2
+    assert res1["skipped_duplicates"] == 0
+
+    chain = storage.get_chain_by_name("HON 2026-09-21 Strategy")
+    assert chain is not None
+    assert len(chain.legs) == 2
+    assert sum(l.quantity for l in chain.legs) == 2
+    assert chain.legs[0].tx_hash != chain.legs[1].tx_hash
+
+    # Second import: re-importing the same file must recognize both as duplicates
+    res2 = ActivityParser.import_sources_folder(sources_dir=str(sources_dir), storage=storage)
+    assert res2["new_legs"] == 0
+    assert res2["skipped_duplicates"] == 2
+
+    # Verify chain still has exactly 2 legs
+    chain_after = storage.get_chain_by_name("HON 2026-09-21 Strategy")
+    assert len(chain_after.legs) == 2
+
+
+def test_import_logging_and_validation(tmp_path):
+    """
+    Verifies that import operations record file metadata, row counts, and raw content
+    in the import_logs table for future audit and validation.
+    """
+    db_file = str(tmp_path / "test_logging.db")
+    storage = ChainStorage(db_path=db_file)
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir()
+
+    csv_data = """Date,Activity Description,Symbol,Quantity,Price,Amount,Cash Balance,Description,Commission,Fees,Account
+Sep-30-2026,YOU SOLD OPENING TRANSACTION,CVX261120P190,-1,3.25,324.34,Processing,PUT (CVX) CHEVRON CORP NOV 20 26 $190,0.65,0.01,MAIN BROKER *1319
+"""
+    (sources_dir / "Activity_LogTest.csv").write_text(csv_data)
+
+    ActivityParser.import_sources_folder(sources_dir=str(sources_dir), storage=storage)
+
+    logs = storage.list_import_logs()
+    assert len(logs) >= 1
+    log = logs[0]
+    assert log["filename"] == "Activity_LogTest.csv"
+    assert log["new_legs"] == 1
+    assert log["file_size"] > 0
+    assert log["file_sha256"] is not None
+
+    full_log = storage.get_import_log(log["id"])
+    assert full_log is not None
+    assert "CVX261120P190" in full_log["raw_content"]
+
