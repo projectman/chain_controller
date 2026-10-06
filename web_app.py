@@ -9,6 +9,7 @@ from options_chain.models import OptionsChain, OptionLeg
 from options_chain.calculator import ChainCalculator
 from options_chain.activity_parser import ActivityParser
 from options_chain.short_puts_analyzer import ShortPutsAnalyzer
+from options_chain.margin_calculator import MarginCalculator, compute_totals
 
 
 def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources") -> Flask:
@@ -109,12 +110,20 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
     def api_run_import():
         try:
             res = ActivityParser.import_sources_folder(sources_dir=sources_dir, storage=storage)
+            margin = {"new_positions": 0, "skipped_duplicates": 0, "warnings": []}
+            try:
+                margin = MarginCalculator.import_sources_folder(sources_dir=sources_dir, storage=storage)
+            except Exception as margin_err:
+                margin["warnings"].append(f"Margin import failed: {margin_err}")
             return jsonify({
                 "success": True,
                 "processed_files": res["processed_files"],
                 "new_legs": res["new_legs"],
                 "skipped_duplicates": res["skipped_duplicates"],
-                "chains_updated": len(res["chains"])
+                "chains_updated": len(res["chains"]),
+                "margin_new": margin["new_positions"],
+                "margin_skipped": margin["skipped_duplicates"],
+                "margin_warnings": margin["warnings"]
             })
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
@@ -342,6 +351,27 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
             },
             chains=formatted_chains,
             totals=totals
+        )
+
+    @app.route("/margin-calculator")
+    def margin_calculator_page():
+        dates = storage.list_margin_dates()
+        selected_date = request.args.get("date")
+        if selected_date not in dates:
+            selected_date = dates[0] if dates else None
+        search = request.args.get("q", "").strip().upper()
+        positions = storage.list_margin_positions(selected_date) if selected_date else []
+        if search:
+            positions = [p for p in positions if search in p["symbol"]]
+        totals = compute_totals(positions)
+        return render_template(
+            "margin_calculator.html",
+            active_page="margin_calculator",
+            positions=positions,
+            dates=dates,
+            selected_date=selected_date,
+            search=search,
+            **totals
         )
 
     @app.route("/short-puts")
