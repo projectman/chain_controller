@@ -124,8 +124,78 @@ class ChainStorage:
                 );
             """)
 
+            # Naked put margin snapshots (one row per contract per source-file date)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS margin_calculator (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    expiration TEXT NOT NULL,
+                    strike REAL NOT NULL,
+                    quantity REAL NOT NULL,
+                    cost_basis REAL NOT NULL,
+                    market_value REAL NOT NULL,
+                    margin REAL NOT NULL,
+                    part_count INTEGER DEFAULT 1,
+                    max_risk REAL NOT NULL,
+                    margin_ratio REAL NOT NULL,
+                    file_date TEXT NOT NULL,
+                    source_file TEXT,
+                    imported_at TEXT NOT NULL,
+                    UNIQUE (symbol, expiration, strike, file_date)
+                );
+            """)
+
             conn.commit()
 
+
+
+    def save_margin_positions(
+        self, positions: List[Dict[str, Any]], file_date: str, source_file: str
+    ) -> Tuple[int, int]:
+        """Saves naked put positions for a file date. Returns (new_count, skipped_duplicates)."""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new, skipped = 0, 0
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for p in positions:
+                cursor.execute("""
+                    INSERT OR IGNORE INTO margin_calculator
+                    (symbol, expiration, strike, quantity, cost_basis, market_value, margin, part_count,
+                     max_risk, margin_ratio, file_date, source_file, imported_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    p["symbol"], p["expiration"], p["strike"], p["quantity"], p["cost_basis"],
+                    p["market_value"], p["margin"], p.get("part_count", 1), p["max_risk"],
+                    p["margin_ratio"], file_date, source_file, now
+                ))
+                if cursor.rowcount:
+                    new += 1
+                else:
+                    skipped += 1
+            conn.commit()
+        return new, skipped
+
+    def list_margin_dates(self) -> List[str]:
+        """Distinct snapshot dates, newest first."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT file_date FROM margin_calculator ORDER BY file_date DESC")
+            return [r["file_date"] for r in cursor.fetchall()]
+
+    def list_margin_positions(self, file_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Naked put rows for one snapshot date (default: latest)."""
+        if file_date is None:
+            dates = self.list_margin_dates()
+            if not dates:
+                return []
+            file_date = dates[0]
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM margin_calculator WHERE file_date = ? ORDER BY symbol, expiration, strike",
+                (file_date,),
+            )
+            return [dict(r) for r in cursor.fetchall()]
 
     def get_existing_tx_hashes(self) -> Set[str]:
         """Returns a set of all transaction hashes currently saved in SQLite database."""
