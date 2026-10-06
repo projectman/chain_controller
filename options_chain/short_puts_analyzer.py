@@ -26,14 +26,18 @@ class ShortPutsAnalyzer:
         all_chains = [storage.get_chain(meta["id"]) for meta in meta_list]
         all_chains = [c for c in all_chains if c and c.opened_date]
 
-        # Index active long put legs across all chains by symbol to support cross-chain pairing
+        today_str = date.today().isoformat()
+        # Index active unexpired long put legs across all chains by symbol to support cross-chain pairing
         all_active_long_puts: Dict[str, List[Tuple[OptionsChain, OptionLeg]]] = {}
         for c in all_chains:
             if not c.active:
                 continue
             for l in c.legs:
+                if l.expiration_date and l.expiration_date < today_str:
+                    continue
                 if l.option_type == OptionType.PUT and (l.action == "BUY_TO_OPEN" or (not l.action and l.side == OptionSide.BUY)):
                     all_active_long_puts.setdefault(c.symbol, []).append((c, l))
+
 
         qualifying: List[Dict[str, Any]] = []
 
