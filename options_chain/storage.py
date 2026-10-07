@@ -622,6 +622,244 @@ class ChainStorage:
             conn.commit()
             return cursor.rowcount
 
+    def relink_chains(self) -> Dict[str, Any]:
+        """
+        Intelligently stitches together fragmented, out-of-order, or orphaned closing/rolling legs
+        into their preceding strategy chains, while strictly preserving manually joined positions.
+
+        Safety Rules:
+        - Never modifies or detaches any chain that is manually linked:
+          * Chains with parent_chain_id IS NOT NULL (child chains).
+          * Chains that have children (id IN (SELECT DISTINCT parent_chain_id FROM chains WHERE parent_chain_id IS NOT NULL)).
+        - Never touches deleted chains (deleted = 1) or deleted legs (deleted = 1).
+        - Operates on auto-managed chains of the same underlying symbol.
+
+        Returns a dictionary with metrics:
+        {
+            "stitched_legs": count,
+            "merged_chains": count,
+            "protected_chains_count": count,
+            "details": List[str]
+        }
+        """
+        from .activity_parser import ActivityParser
+        from .models import TradeAction
+
+        stitched_legs_count = 0
+        merged_chains_count = 0
+        details: List[str] = []
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # 1. Identify protected chains (manually joined parent or child)
+            cursor.execute("""
+                SELECT DISTINCT id FROM chains WHERE parent_chain_id IS NOT NULL
+                UNION
+                SELECT DISTINCT parent_chain_id FROM chains WHERE parent_chain_id IS NOT NULL
+            """)
+            protected_ids = {r[0] for r in cursor.fetchall() if r[0] is not None}
+
+            # 2. Get distinct symbols of non-deleted, non-protected chains
+            if protected_ids:
+                placeholders = ','.join('?' for _ in protected_ids)
+                cursor.execute(f"""
+                    SELECT DISTINCT symbol FROM chains 
+                    WHERE deleted = 0 AND id NOT IN ({placeholders})
+                """, list(protected_ids))
+            else:
+                cursor.execute("""
+                    SELECT DISTINCT symbol FROM chains 
+                    WHERE deleted = 0
+                """)
+            symbols = [r['symbol'] for r in cursor.fetchall() if r['symbol']]
+
+        for sym in sorted(symbols):
+            # Iteratively stitch candidate chains into target chains for this symbol
+            iteration = 0
+            max_iterations = 50  # Guard against any potential infinite loop
+
+            while iteration < max_iterations:
+                iteration += 1
+                stitched_in_pass = False
+
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    if protected_ids:
+                        placeholders = ','.join('?' for _ in protected_ids)
+                        cursor.execute(f"""
+                            SELECT id FROM chains 
+                            WHERE symbol = ? AND deleted = 0 AND id NOT IN ({placeholders})
+                            ORDER BY opened_date ASC, id ASC
+                        """, [sym] + list(protected_ids))
+                    else:
+                        cursor.execute("""
+                            SELECT id FROM chains 
+                            WHERE symbol = ? AND deleted = 0
+                            ORDER BY opened_date ASC, id ASC
+                        """, (sym,))
+                    sym_chain_ids = [r['id'] for r in cursor.fetchall()]
+
+                chains = [self.get_chain(cid, include_children=False) for cid in sym_chain_ids]
+                chains = [c for c in chains if c and c.legs]
+
+                for target_chain in chains:
+                    # Check open contracts for target_chain
+                    occ_symbols = {l.occ_symbol for l in target_chain.legs if l.occ_symbol and not getattr(l, 'deleted', False)}
+                    target_has_open = False
+                    for occ in occ_symbols:
+                        rem_l, rem_s = ActivityParser.get_open_contract_balance(target_chain, occ)
+                        if rem_l > 0 or rem_s > 0:
+                            target_has_open = True
+                            break
+
+                    if not target_has_open:
+                        continue
+
+                    match_found = False
+                    for cand_chain in chains:
+                        if cand_chain.id == target_chain.id:
+                            continue
+                        if cand_chain.opened_date and target_chain.opened_date and cand_chain.opened_date < target_chain.opened_date:
+                            continue
+
+                        # Find closing legs in cand_chain matching target_chain's open contracts
+                        legs_to_move = []
+                        move_dates = set()
+
+                        for occ in occ_symbols:
+                            rem_l, rem_s = ActivityParser.get_open_contract_balance(target_chain, occ)
+                            if rem_s > 0:
+                                for cl in cand_chain.legs:
+                                    if getattr(cl, 'deleted', False):
+                                        continue
+                                    if cl.occ_symbol == occ and cl.action == TradeAction.BUY_TO_CLOSE.value:
+                                        if cl not in legs_to_move:
+                                            legs_to_move.append(cl)
+                                            if cl.trade_date:
+                                                move_dates.add(cl.trade_date)
+                            if rem_l > 0:
+                                for cl in cand_chain.legs:
+                                    if getattr(cl, 'deleted', False):
+                                        continue
+                                    if cl.occ_symbol == occ and cl.action == TradeAction.SELL_TO_CLOSE.value:
+                                        if cl not in legs_to_move:
+                                            legs_to_move.append(cl)
+                                            if cl.trade_date:
+                                                move_dates.add(cl.trade_date)
+
+                        if legs_to_move:
+                            # Pull along same-day opening legs from cand_chain (the roll continuation)
+                            for ol in cand_chain.legs:
+                                if getattr(ol, 'deleted', False):
+                                    continue
+                                if ol.trade_date in move_dates and ol not in legs_to_move and "OPEN" in (ol.action or ""):
+                                    legs_to_move.append(ol)
+
+                            # Re-assign legs in database
+                            with self._get_connection() as conn:
+                                cursor = conn.cursor()
+                                for leg in legs_to_move:
+                                    cursor.execute("UPDATE legs SET chain_id = ? WHERE id = ?", (target_chain.id, leg.id))
+
+                                # Check remaining legs for cand_chain
+                                remaining_cand_legs = [l for l in cand_chain.legs if l not in legs_to_move and not getattr(l, 'deleted', False)]
+                                if not remaining_cand_legs:
+                                    cursor.execute("DELETE FROM chains WHERE id = ?", (cand_chain.id,))
+                                    merged_chains_count += 1
+                                    details.append(f"Merged #{cand_chain.id} ({cand_chain.name}) into #{target_chain.id} ({target_chain.name}) ({len(legs_to_move)} legs).")
+                                conn.commit()
+
+                            stitched_legs_count += len(legs_to_move)
+
+                            # Recalculate cand_chain if not deleted
+                            if remaining_cand_legs:
+                                cand_updated = self.get_chain(cand_chain.id, include_children=False)
+                                if cand_updated:
+                                    c_active = ActivityParser.is_chain_active(cand_updated)
+                                    c_open_dates = [l.trade_date for l in cand_updated.legs if l.trade_date and "OPEN" in (l.action or "")]
+                                    c_min_date = min(c_open_dates) if c_open_dates else cand_updated.opened_date
+                                    c_close = None
+                                    if not c_active:
+                                        c_close_dates = [l.trade_date for l in cand_updated.legs if l.trade_date and "CLOSE" in (l.action or "")]
+                                        c_close = max(c_close_dates) if c_close_dates else cand_updated.closed_date
+                                    with self._get_connection() as conn:
+                                        cursor = conn.cursor()
+                                        cursor.execute("""
+                                            UPDATE chains SET active = ?, opened_date = ?, closed_date = ? WHERE id = ?
+                                        """, (1 if c_active else 0, c_min_date, c_close, cand_chain.id))
+                                        conn.commit()
+
+                            # Recalculate target_chain status in DB
+                            target_updated = self.get_chain(target_chain.id, include_children=False)
+                            if target_updated:
+                                t_active = ActivityParser.is_chain_active(target_updated)
+                                t_open_dates = [l.trade_date for l in target_updated.legs if l.trade_date and "OPEN" in (l.action or "")]
+                                t_min_date = min(t_open_dates) if t_open_dates else target_updated.opened_date
+                                t_close = None
+                                if not t_active:
+                                    t_close_dates = [l.trade_date for l in target_updated.legs if l.trade_date and "CLOSE" in (l.action or "")]
+                                    t_close = max(t_close_dates) if t_close_dates else target_updated.closed_date
+                                with self._get_connection() as conn:
+                                    cursor = conn.cursor()
+                                    cursor.execute("""
+                                        UPDATE chains SET active = ?, opened_date = ?, closed_date = ? WHERE id = ?
+                                    """, (1 if t_active else 0, t_min_date, t_close, target_chain.id))
+                                    conn.commit()
+
+                            stitched_in_pass = True
+                            match_found = True
+                            break
+
+                    if match_found:
+                        break
+
+                if not stitched_in_pass:
+                    break
+
+        # 3. Clean up any remaining empty chains
+        self.clean_empty_chains()
+
+        # 4. Final sanity check on active/closed status for all non-protected chains
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if protected_ids:
+                placeholders = ','.join('?' for _ in protected_ids)
+                cursor.execute(f"""
+                    SELECT id FROM chains 
+                    WHERE deleted = 0 AND id NOT IN ({placeholders})
+                """, list(protected_ids))
+            else:
+                cursor.execute("""
+                    SELECT id FROM chains 
+                    WHERE deleted = 0
+                """)
+            all_non_protected = [r['id'] for r in cursor.fetchall()]
+
+        for cid in all_non_protected:
+            c = self.get_chain(cid, include_children=False)
+            if not c or not c.legs:
+                continue
+            is_active = ActivityParser.is_chain_active(c)
+            db_active = bool(c.active)
+            if is_active != db_active:
+                open_dates = [l.trade_date for l in c.legs if l.trade_date and "OPEN" in (l.action or "")]
+                min_date = min(open_dates) if open_dates else c.opened_date
+                close_dates = [l.trade_date for l in c.legs if l.trade_date and "CLOSE" in (l.action or "")]
+                latest_close = max(close_dates) if close_dates and not is_active else None
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE chains SET active = ?, opened_date = ?, closed_date = ? WHERE id = ?
+                    """, (1 if is_active else 0, min_date, latest_close, cid))
+                    conn.commit()
+
+        return {
+            "stitched_legs": stitched_legs_count,
+            "merged_chains": merged_chains_count,
+            "protected_chains_count": len(protected_ids),
+            "details": details
+        }
+
     def soft_delete_chain(self, chain_id: int) -> bool:
         """Marks a chain as deleted (soft delete) without dropping table records."""
         with self._get_connection() as conn:

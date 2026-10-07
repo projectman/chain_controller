@@ -297,7 +297,7 @@ async function runImport() {
       banner.innerHTML = `
         <div class="flex items-center gap-2">
           <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-          <span><strong>Import Complete:</strong> Processed ${data.processed_files} files &bull; ${data.new_legs} new legs imported &bull; ${data.skipped_duplicates} duplicate legs skipped. &bull; Margin: ${data.margin_new} new naked puts, ${data.margin_skipped} duplicates skipped.${(data.margin_warnings||[]).length ? ' ⚠ ' + data.margin_warnings.join('; ') : ''}</span>
+          <span><strong>Import Complete:</strong> Processed ${data.processed_files} files &bull; ${data.new_legs} new legs imported &bull; ${data.skipped_duplicates} duplicate legs skipped.${data.relink_stitched_legs ? ` &bull; 🔄 Auto-healed: ${data.relink_stitched_legs} legs stitched across ${data.relink_merged_chains} chains.` : ''} &bull; Margin: ${data.margin_new} new naked puts, ${data.margin_skipped} duplicates skipped.${(data.margin_warnings||[]).length ? ' ⚠ ' + data.margin_warnings.join('; ') : ''}</span>
         </div>
         <button onclick="location.reload()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-3 py-1.5 rounded-lg font-medium">Refresh Page</button>
       `;

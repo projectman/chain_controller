@@ -431,6 +431,7 @@ class ActivityParser:
         resolved_chains = cls.build_chains_from_legs(all_legs, existing_chains=existing_chains)
         resolved_chains = [c for c in resolved_chains if c.legs]
 
+        relink_res = None
         if storage:
             for chain in resolved_chains:
                 if not chain.legs:
@@ -440,6 +441,9 @@ class ActivityParser:
                     chain.id = existing_db.id
                 storage.save_chain(chain)
 
+            # Auto-heal / re-link fragmented or out-of-order chains
+            relink_res = storage.relink_chains()
+
             # Purge any remaining empty chains from database
             storage.clean_empty_chains()
 
@@ -447,5 +451,6 @@ class ActivityParser:
             "processed_files": len(files),
             "new_legs": total_new_legs,
             "skipped_duplicates": total_skipped_duplicates,
-            "chains": resolved_chains
+            "chains": resolved_chains,
+            "relink": relink_res
         }

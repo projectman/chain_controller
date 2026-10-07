@@ -15,7 +15,12 @@
         Explore options chains and individual positions saved in <code class="bg-slate-900 px-1.5 py-0.5 rounded text-indigo-300">options_chains.db</code>.
       </p>
     </div>
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center gap-3">
+      <!-- Rebuild / Auto-Heal Button -->
+      <button onclick="rebuildChains()" id="rebuildChainsBtn" class="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-3.5 py-2 rounded-lg text-sm transition shadow-sm" title="Re-link rolling and closing trades into continuous chains without altering manually joined positions">
+        <span id="rebuildBtnIcon">🔄</span> <span id="rebuildBtnText">Rebuild / Auto-Heal Chains</span>
+      </button>
+
       <!-- View Mode Switcher: Chains vs Simple -->
       <div class="inline-flex p-1 bg-slate-900/90 rounded-lg border border-slate-700/80 text-xs font-semibold">
         <a href="/chains?view=chains&status={{ current_status }}&date_preset={{ date_preset }}{% if search %}&q={{ search }}{% endif %}" 
@@ -666,6 +671,43 @@ async function unjoinChain(childId, parentId, event) {
     }
   } catch (err) {
     showBanner(`Network error: ${err.message}`, false);
+  }
+}
+
+// Rebuild / Auto-Heal Chains Action
+async function rebuildChains() {
+  const btn = document.getElementById("rebuildChainsBtn");
+  const icon = document.getElementById("rebuildBtnIcon");
+  const text = document.getElementById("rebuildBtnText");
+
+  if (!confirm("Re-link rolling and closing trades into continuous chains? Manually linked/joined positions will NOT be modified.")) {
+    return;
+  }
+
+  btn.disabled = true;
+  btn.classList.add("opacity-75", "cursor-not-allowed");
+  icon.classList.add("animate-spin");
+  text.textContent = "Auto-healing chains...";
+
+  try {
+    const res = await fetch("/api/chains/rebuild", { method: "POST" });
+    const data = await res.json();
+    if (data.success) {
+      showBanner(data.message || "Chains successfully re-linked!", true);
+      setTimeout(() => location.reload(), 1200);
+    } else {
+      showBanner(data.error || "Failed to rebuild chains.", false);
+      btn.disabled = false;
+      btn.classList.remove("opacity-75", "cursor-not-allowed");
+      icon.classList.remove("animate-spin");
+      text.textContent = "Rebuild / Auto-Heal Chains";
+    }
+  } catch (err) {
+    showBanner(`Network error: ${err.message}`, false);
+    btn.disabled = false;
+    btn.classList.remove("opacity-75", "cursor-not-allowed");
+    icon.classList.remove("animate-spin");
+    text.textContent = "Rebuild / Auto-Heal Chains";
   }
 }
 </script>

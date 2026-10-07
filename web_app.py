@@ -115,12 +115,15 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
                 margin = MarginCalculator.import_sources_folder(sources_dir=sources_dir, storage=storage)
             except Exception as margin_err:
                 margin["warnings"].append(f"Margin import failed: {margin_err}")
+            relink_data = res.get("relink") or {}
             return jsonify({
                 "success": True,
                 "processed_files": res["processed_files"],
                 "new_legs": res["new_legs"],
                 "skipped_duplicates": res["skipped_duplicates"],
                 "chains_updated": len(res["chains"]),
+                "relink_stitched_legs": relink_data.get("stitched_legs", 0),
+                "relink_merged_chains": relink_data.get("merged_chains", 0),
                 "margin_new": margin["new_positions"],
                 "margin_skipped": margin["skipped_duplicates"],
                 "margin_warnings": margin["warnings"]
@@ -219,6 +222,28 @@ def create_app(db_path: str = "options_chains.db", sources_dir: str = "sources")
             if success:
                 return jsonify({"success": True, "message": msg})
             return jsonify({"success": False, "error": msg}), 400
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/chains/rebuild", methods=["POST"])
+    def api_rebuild_chains():
+        try:
+            result = storage.relink_chains()
+            stitched = result.get("stitched_legs", 0)
+            merged = result.get("merged_chains", 0)
+            protected = result.get("protected_chains_count", 0)
+            if stitched > 0 or merged > 0:
+                msg = f"Auto-heal complete: stitched {stitched} legs across {merged} chains ({protected} manually linked positions preserved)."
+            else:
+                msg = f"Chains are already fully consolidated ({protected} manually linked positions preserved)."
+            return jsonify({
+                "success": True,
+                "message": msg,
+                "stitched_legs": stitched,
+                "merged_chains": merged,
+                "protected_chains": protected,
+                "details": result.get("details", [])
+            })
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
 

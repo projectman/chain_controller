@@ -9,12 +9,17 @@ def client(tmp_path):
     db_file = str(tmp_path / "test_web.db")
     storage = ChainStorage(db_path=db_file)
 
+    from datetime import date, timedelta
+    today = date.today()
+    d_recent = (today - timedelta(days=10)).strftime("%Y-%m-%d")
+    d_older = (today - timedelta(days=60)).strftime("%Y-%m-%d")
+
     # Seed 1 active chain and 1 closed chain
     c1 = OptionsChain(
         symbol="AAPL",
         name="AAPL 2026-08-31 Strategy",
         active=True,
-        opened_date="2026-08-31"
+        opened_date=d_recent
     )
     c1.add_leg(OptionLeg(
         strike=150.0,
@@ -23,7 +28,7 @@ def client(tmp_path):
         quantity=1,
         entry_price=5.0,
         action="BUY_TO_OPEN",
-        trade_date="2026-08-31"
+        trade_date=d_recent
     ))
     storage.save_chain(c1)
 
@@ -31,8 +36,8 @@ def client(tmp_path):
         symbol="IBM",
         name="IBM 2026-07-14 Strategy",
         active=False,
-        opened_date="2026-07-14",
-        closed_date="2026-07-16"
+        opened_date=d_older,
+        closed_date=(today - timedelta(days=58)).strftime("%Y-%m-%d")
     )
     c2.add_leg(OptionLeg(
         strike=200.0,
@@ -41,7 +46,7 @@ def client(tmp_path):
         quantity=1,
         entry_price=3.80,
         action="SELL_TO_OPEN",
-        trade_date="2026-07-14"
+        trade_date=d_older
     ))
     c2.add_leg(OptionLeg(
         strike=200.0,
